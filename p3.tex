@@ -14,6 +14,17 @@
 \maketitle
 
 \section{Description}
+\hspace{\fill}
+
+TartanTrades is a system for batteling the corrupt block system at CMU\@.  Currently, undergraduates are given "blocks" to be used to purchase meals.
+These blocks expire every other week, and many go to waste since most students are unable to consume all of the blocks within the tight time limit.\\
+
+We will solve this problem by creating a distributed marketplace that will allow for students to buy/sell their blocks.  Someone who is stuck on the meal
+plan can put their blocks up for sale with a certain asking price.  Other students can mark themselves as "buyers" with a maximum amount that they are willing
+to pay for the block as well as a maximum distance that they are willing to walk.  If a student wishes to purchase a block, all of the sellers are notified with
+the option of claiming the sale.
+
+There will be a rating system for buyers/sellers to ensure that people don't take advantage of others and not pay or not have the block.\\
 
 
 \section{Implementation Structure}
@@ -21,6 +32,9 @@
 
 \section{Distributed Features \& Algorithms}
 
+TartanTrades will use Lamport timestamps in order to determine the order of events that happen.  For example, it will determine who reserved a block first.
+
+TartanTrades will also make use of Paxos for handling server node failures and also for ensuring exactly one buyer is connected to one seller.
 
 \section{Testing}
 
