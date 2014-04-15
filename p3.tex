@@ -1,4 +1,4 @@
-\title{TartanTrade - A Distributed Marketplace}
+\title{TartanTrades - A Distributed Marketplace}
 \author{
         Mat Gray \\
         mhgray\\
@@ -9,12 +9,12 @@
 \date{April 15, 2014}
 
 \documentclass[12pt]{article}
+\setlength{\parindent}{0cm}
 
 \begin{document}
 \maketitle
 
 \section{Description}
-\hspace{\fill}
 
 TartanTrades is a system for batteling the corrupt block system at CMU\@.  Currently, undergraduates are given "blocks" to be used to purchase meals.
 These blocks expire every other week, and many go to waste since most students are unable to consume all of the blocks within the tight time limit.\\
@@ -24,7 +24,7 @@ plan can put their blocks up for sale with a certain asking price.  Other studen
 to pay for the block as well as a maximum distance that they are willing to walk.  If a student wishes to purchase a block, all of the sellers are notified with
 the option of claiming the sale.
 
-There will be a rating system for buyers/sellers to ensure that people don't take advantage of others and not pay or not have the block.\\
+There will be a rating system for buyers/sellers to ensure that people don't take advantage of others and not pay or not have the block.
 
 
 \section{Implementation Structure}
@@ -38,10 +38,44 @@ TartanTrades will also make use of Paxos for handling server node failures and a
 
 \section{Testing}
 
+We plan on conducting unit tests of the system's back end with the testing package built into the Go programming language. Such tests will construct an environment where several sellers and buyers are created manually. Each of them will interact with one other via API calls, getting matched up by the system accordingly.\\
+
+We will focus on testing for output correctness for different series of calls. The system should always match up the first buyer to the first seller who accepts the deal. Tests regarding correctness involve making sure that synchronization among the servers is sustained through the use of Lamport time stamps.\\
+
+In addition, the system should also be robust with respect to client failure. For example, if a pairing has been confirmed but the seller's machine dies, then the system should properly redirect the buyer to the next seller on the queue. If the buyer's machine dies, the system should re-add the seller at the front of the queue. Furthermore, the system should handle server failure correctly, ensuring that it recovers with accurate data once it reboots.\\
 
 \section{Tiers}
 
+We will divide the entire up into three main tiers, signifying varying levels of importance for the features under them to be completed. They are as follows:
+
+\paragraph{Tier 1:}
+The application should pass all tests for robustness, particularly with regard to client/server failure. It should be deployed on at least a web client and made available for CMU students. Its back-end should be fully functional - able to identify buyers/sellers on campus and pair them up accordingly. Most importantly, it should be properly build on a distributed environment with Paxos correctly implemented for node communication.
+
+\paragraph{Tier 2:}
+If time permits, we will implement mobile clients (both iOS and Android) for TartanTrades, as this will greatly increase its utility. In addition, we will also allow for different types of payment methods to be used for transactions, thus increasing its flexibility. Finally, we will implement a rating system for users to help prevent possible scams.
+
+\paragraph{Tier 3:}
+If even more time permits, we will extend TartanTrades into a generic marketplace for the campus. Not only will users be able to buy and sell blocks, but we will allow for any other item to be sold as well. This will allow for a quick and convenient way to purchase random materials on campus without having to commute too far.
 
 \section{Schedule}
+
+The tentative schedule that we have planned out is as follows:\\
+
+\textbf{Week of April 14th}\\
+Tuesday (4/15): Proposal Due\\
+Wednesday (4/16): Begin work on single server back-end\\
+Friday (4/18): Extend to work for multiple servers simultaneously with Paxos\\
+
+\textbf{Week of April 21st}\\
+Monday (4/21): Continue working on making the application distributed\\
+Wednesday (4/23): Preliminary demonstration\\
+Thursday (4/24): Write and run test cases to ensure correctness\\
+Saturday (4/26): Build front-end mobile clients\\
+
+\textbf{Week of April 28th}\\
+Monday (4/28): Extend the app to allow for different payment methods\\
+Tuesday (4/29): Final demonstration\\
+Wednesday (4/30): Final demonstration\\
+Thursday (5/1): Final submission 
 
 \end{document}
