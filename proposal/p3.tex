@@ -9,6 +9,7 @@
 \date{April 15, 2014}
 
 \documentclass[12pt]{article}
+\usepackage{graphicx}
 \setlength{\parindent}{0cm}
 
 \begin{document}
@@ -29,12 +30,25 @@ There will be a rating system for buyers/sellers to ensure that people don't tak
 
 \section{Implementation Structure}
 
+We will use one master server to keep track of user authentications and other house-cleaning tasks such as maintaining a list of servers in the consistant hashing ring.\\
+
+The following diagram shows what happens when a user wants to make a block purchase.
+
+\includegraphics[scale=.6]{./diagram-1.png}\\
+
+When the purchase is made, the user's phone will use paxos to try to claim the block.  It will get a list of all the servers in the ring from the master
+server then it will contact all of the servers in the ring and send the \verb|PREPARE REQUEST| message.  If all goes well and no one has claimed the block yet, it will then send an \verb|ACCEPT REQUEST| in order to claim
+the block.
 
 \section{Distributed Features \& Algorithms}
 
-TartanTrades will use Lamport timestamps in order to determine the order of events that happen.  For example, it will determine who reserved a block first.
+TartanTrades will use Lamport timestamps in order to determine the order of events that happen.  For example, it will determine who reserved a block first.\\
 
-TartanTrades will also make use of Paxos for handling server node failures and also for ensuring exactly one buyer is connected to one seller.
+On the server side, TartanTrades will use a distributed hashtable with consistant hashing to store user data and credentials.  Data for a user will be grouped onto the same server.  Moreover, the
+servers will make use of replication in case a server dies.\\
+
+TartanTrades will also make use of Paxos for handling client-side failures and also for ensuring exactly one buyer per seller (The CMU block system does not allow
+for spending multiple blocks at once).  The clients will contact all of servers in the ring to try to claim the block, as dicussed in the previous section.
 
 \section{Testing}
 
