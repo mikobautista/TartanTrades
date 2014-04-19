@@ -1,7 +1,7 @@
 package tslice
 
 import (
-    "github.com/cmu440/tribbler/logger"
+    "github.com/mikobautista/tartantrades/logging"
 )
 
 type Tslice struct {
@@ -41,7 +41,7 @@ type getStringListRequest struct {
     r chan []string
 }
 
-var LOG = logger.NewLogger(false)
+var LOG = logging.NewLogger(false)
 
 func NewTslice() Tslice {
     rv := Tslice{

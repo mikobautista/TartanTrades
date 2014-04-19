@@ -1,4 +1,4 @@
-package logger
+package logging
 
 import (
     "fmt"
@@ -8,7 +8,7 @@ import (
 )
 
 const (
-    name        = "log-proto.txt"
+    name        = "log.txt"
     flag        = os.O_RDWR | os.O_CREATE
     perm        = os.FileMode(0666)
     LOG_TO_FILE = false

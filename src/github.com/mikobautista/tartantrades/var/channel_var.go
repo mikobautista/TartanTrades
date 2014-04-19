@@ -1,7 +1,7 @@
 package tvar
 
 import (
-    "github.com/cmu440/tribbler/logger"
+    "github.com/mikobautista/tartantrades/logging"
 )
 
 type Tvar struct {
@@ -25,7 +25,7 @@ type manipulateRequest struct {
     r   chan interface{}
 }
 
-var LOG = logger.NewLogger(true)
+var LOG = logging.NewLogger(true)
 
 func NewTvar() Tvar {
     rv := Tvar{

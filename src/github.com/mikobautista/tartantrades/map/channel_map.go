@@ -1,7 +1,7 @@
 package tmap
 
 import (
-    "github.com/cmu440/tribbler/logger"
+    "github.com/mikobautista/tartantrades/logging"
 )
 
 type Tmap struct {
@@ -34,7 +34,7 @@ type manipulateRequest struct {
     r   chan interface{}
 }
 
-var LOG = logger.NewLogger(true)
+var LOG = logging.NewLogger(true)
 
 func NewTmap() Tmap {
     rv := Tmap{
