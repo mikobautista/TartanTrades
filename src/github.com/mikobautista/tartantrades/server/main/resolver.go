@@ -1,22 +1,32 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"fmt"
 	"html/template"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
+	"net/rpc"
 	"regexp"
+
+	"github.com/mikobautista/tartantrades/logging"
+	"github.com/mikobautista/tartantrades/rpc/resolver_rpc"
 )
 
 var (
 	addr = flag.Bool("addr", false, "find open address and print to final-port.txt")
+	LOG  = logging.NewLogger(true)
 )
 
 type Page struct {
 	Title string
 	Body  []byte
+}
+
+type resolver struct {
 }
 
 func (p *Page) save() error {
@@ -84,6 +94,7 @@ func makeHandler(fn func(http.ResponseWriter, *http.Request, string)) http.Handl
 }
 
 func main() {
+	// First initialize http server
 	flag.Parse()
 	http.HandleFunc("/view/", makeHandler(viewHandler))
 	http.HandleFunc("/edit/", makeHandler(editHandler))
@@ -104,4 +115,42 @@ func main() {
 	}
 
 	http.ListenAndServe(":8080", nil)
+
+	// Initialize RPC server for trade servers
+	r := &resolver{}
+
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", 8081))
+	err = rpc.RegisterName("StorageServer", resolver_rpc.Wrap(r))
+	LOG.CheckForError(err, true)
+	rpc.HandleHTTP()
+	go http.Serve(ln, nil)
+
+}
+
+func (r *resolver) RegisterServer(*resolver_rpc.RegisterArgs, *resolver_rpc.RegisterReply) error {
+	return errors.New("Not Implemented")
+}
+
+func (r *resolver) GetServers(*resolver_rpc.GetServersArgs, *resolver_rpc.GetServersReply) error {
+	return errors.New("Not Implemented")
+}
+
+func (r *resolver) Get(*resolver_rpc.GetArgs, *resolver_rpc.GetReply) error {
+	return errors.New("Not Implemented")
+}
+
+func (r *resolver) GetList(*resolver_rpc.GetArgs, *resolver_rpc.GetListReply) error {
+	return errors.New("Not Implemented")
+}
+
+func (r *resolver) Put(*resolver_rpc.PutArgs, *resolver_rpc.PutReply) error {
+	return errors.New("Not Implemented")
+}
+
+func (r *resolver) AppendToList(*resolver_rpc.PutArgs, *resolver_rpc.PutReply) error {
+	return errors.New("Not Implemented")
+}
+
+func (r *resolver) RemoveFromList(*resolver_rpc.PutArgs, *resolver_rpc.PutReply) error {
+	return errors.New("Not Implemented")
 }

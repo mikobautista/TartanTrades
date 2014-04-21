@@ -1,7 +1,7 @@
 package resolver_rpc
 
 // STAFF USE ONLY! Students should not use this interface in their code.
-type RemoteStorageServer interface {
+type TradeResolver interface {
 	RegisterServer(*RegisterArgs, *RegisterReply) error
 	GetServers(*GetServersArgs, *GetServersReply) error
 	Get(*GetArgs, *GetReply) error
@@ -11,10 +11,10 @@ type RemoteStorageServer interface {
 	RemoveFromList(*PutArgs, *PutReply) error
 }
 
-type StorageServer struct {
-	RemoteStorageServer
+type Resolver struct {
+	TradeResolver
 }
 
-func Wrap(s RemoteStorageServer) RemoteStorageServer {
-	return &StorageServer{s}
+func Wrap(s TradeResolver) *Resolver {
+	return &Resolver{s}
 }
