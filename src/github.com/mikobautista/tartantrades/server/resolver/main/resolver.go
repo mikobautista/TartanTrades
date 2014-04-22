@@ -29,12 +29,13 @@ var (
 
 func main() {
 	var tcpPort = flag.Int("tradeport", 1234, "Port to start resolver trade server on")
-	var httpPort = flag.Int("httpport", 80, "Port to start resolver http server on")
+	var httpPort = flag.Int("httpport", 80, "Resolver http port")
 	flag.Parse()
 
 	m := make(map[string]shared.HandlerType)
 	m["/servers/"] = httpGetTradeServerHandler
 
+	LOG.LogVerbose("Resolver HTTP server starting on %s:%d", CONN_HOST, *httpPort)
 	go shared.NewHttpServer(*httpPort, m)
 
 	// Listen for incoming connections.
@@ -65,14 +66,13 @@ func handleRequest(conn net.Conn) {
 	LOG.CheckForError(err, false)
 	connectionHostPort := conn.RemoteAddr().String()
 	h := GetHash(connectionHostPort)
-	LOG.LogVerbose("Generating ID for %s", connectionHostPort)
 	sH := fmt.Sprintf("%d", h)
+	LOG.LogVerbose("ID for %s is %s", connectionHostPort, sH)
 	connectionMap.Put(h, conn)
 	tradeServers.Append(connectionHostPort)
 	// Send a hash back to person contacting us.
 	conn.Write([]byte(sH))
-	// Close the connection when you're done with it.
-	conn.Close()
+	go listenToTradeServer(conn, h, connectionHostPort)
 }
 
 func GetHash(key string) uint32 {
@@ -81,9 +81,37 @@ func GetHash(key string) uint32 {
 	return hasher.Sum32()
 }
 
+func listenToTradeServer(conn net.Conn, id uint32, connectionHostPort string) {
+	defer conn.Close()
+	defer connectionMap.Rem(id)
+	defer tradeServers.Rem(connectionHostPort)
+	buf := make([]byte, 1024)
+
+	for {
+		_, err := conn.Read(buf)
+		if err != nil {
+			LOG.LogVerbose("TCP error for client id %d (%s), dropping...", id, connectionHostPort)
+			return
+		}
+		handleMessageFromTradeServer(string(buf), id)
+	}
+}
+
+func handleMessageFromTradeServer(message string, id uint32) {
+	// TODO: Implement
+}
+
+// ----------------------------------------------------
+//                  HTTP handlers
+// ----------------------------------------------------
+
 func httpGetTradeServerHandler(w http.ResponseWriter, r *http.Request) {
 	// Print out all of the tradeservers
 	for _, hostport := range tradeServers.GetStringList() {
 		fmt.Fprintf(w, "%s\n", hostport)
 	}
+}
+
+func httpLoginHandler(w http.ResponseWriter, r *http.Request) {
+
 }
