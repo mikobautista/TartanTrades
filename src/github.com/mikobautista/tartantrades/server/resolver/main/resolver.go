@@ -9,7 +9,6 @@ import (
 	"hash/fnv"
 	"net"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/mikobautista/tartantrades/channelmap"
@@ -49,9 +48,10 @@ func main() {
 	var tcpPort = flag.Int("tradeport", 1234, "Port to start resolver trade server on")
 	var httpPort = flag.Int("httpport", 80, "Resolver http port")
 	var tableName = flag.String("db", "accounts", "Database accounts table name")
-	var dbUser = flag.String("db_user", "tartantrade", "Database username")
+	var dbUser = flag.String("db_user", "resolver", "Database username")
 	var dbPw = flag.String("db_pw", "password", "Database password")
 	var sessionDuration = flag.Int("session_duration", 30, "Duration of a login session in minutes")
+	var sessionExperation = flag.Bool("sessionExperation", true, "Sessions expire")
 	flag.Parse()
 
 	LOG.LogVerbose("Establishing Connection to Database...")
@@ -62,7 +62,7 @@ func main() {
 	m := make(map[string]shared.HandlerType)
 	m["/servers/"] = httpGetTradeServerHandler
 	m["/login/"] = httpLoginHandler(db, *sessionDuration)
-	m["/validate/"] = httpAuthenticateHandler(db)
+	m["/validate/"] = httpAuthenticateHandler(db, *sessionExperation)
 
 	LOG.LogVerbose("Resolver HTTP server starting on %s:%d", CONN_HOST, *httpPort)
 	go shared.NewHttpServer(*httpPort, m)
@@ -77,31 +77,52 @@ func main() {
 	for {
 		// Listen for an incoming connection.
 		conn, err := l.Accept()
-		if err != nil {
-			fmt.Println("Error accepting: ", err.Error())
-			os.Exit(1)
-		}
+		LOG.CheckForError(err, false)
 		// Handle connections in a new goroutine.
-		go handleRequest(conn, db)
+		go onTradeServerConnection(conn, db, *sessionExperation)
 	}
 }
 
 // Handles incoming requests.
-func handleRequest(conn net.Conn, db *sql.DB) {
+func onTradeServerConnection(conn net.Conn, db *sql.DB, sessionExperation bool) {
 	// Make a buffer to hold incoming data.
 	buf := make([]byte, 1024)
+	var m shared.ResolverMessage
 	// Read the incoming connection into the buffer.
-	_, err := conn.Read(buf)
+	n, err := conn.Read(buf)
 	LOG.CheckForError(err, false)
-	connectionHostPort := conn.RemoteAddr().String()
+	_ = json.Unmarshal(buf[:n], &m)
+	LOG.LogVerbose("%s", string(buf))
+	LOG.LogVerbose("%d - %s", int(m.Type), m.Payload)
+
+	connectionHostPort := m.Payload
 	h := GetHash(connectionHostPort)
-	sH := fmt.Sprintf("%d", h)
-	LOG.LogVerbose("ID for %s is %s", connectionHostPort, sH)
+	LOG.LogVerbose("ID for %s is %d", connectionHostPort, h)
+
+	jId := shared.ResolverMessage{
+		Type: shared.ID_ASSIGNMENT,
+		Id:   h,
+	}
+
+	mId, _ := json.Marshal(jId)
+
+	conn.Write(mId)
+
+	// Notify trade servers of new server joining
+	for _, v := range connectionMap.Raw() {
+		joinMessage := shared.ResolverMessage{
+			Type:    shared.TRADE_SERVER_JOIN,
+			Payload: connectionHostPort,
+		}
+		marshalledMessage, _ := json.Marshal(joinMessage)
+		v.(net.Conn).Write(marshalledMessage)
+	}
+
 	connectionMap.Put(h, conn)
 	tradeServers.Append(connectionHostPort)
+
 	// Send a hash back to person contacting us.
-	conn.Write([]byte(sH))
-	go listenToTradeServer(conn, h, connectionHostPort, db)
+	go listenToTradeServer(conn, h, connectionHostPort, db, sessionExperation)
 }
 
 func GetHash(key string) uint32 {
@@ -110,29 +131,40 @@ func GetHash(key string) uint32 {
 	return hasher.Sum32()
 }
 
-func listenToTradeServer(conn net.Conn, id uint32, connectionHostPort string, db *sql.DB) {
-	defer conn.Close()
-	defer connectionMap.Rem(id)
-	defer tradeServers.Rem(connectionHostPort)
+func listenToTradeServer(conn net.Conn, id uint32, connectionHostPort string, db *sql.DB, checkExpires bool) {
 	buf := make([]byte, 1024)
 
 	for {
-		_, err := conn.Read(buf)
+		n, err := conn.Read(buf)
 		if err != nil {
 			LOG.LogVerbose("TCP error for trade server id %d (%s), dropping...", id, connectionHostPort)
+			conn.Close()
+			connectionMap.Rem(id)
+			tradeServers.Rem(connectionHostPort)
+
+			//Notify Clients of drop
+			for _, v := range connectionMap.Raw() {
+				joinMessage := shared.ResolverMessage{
+					Type:    shared.TRADE_SERVER_DROP,
+					Payload: connectionHostPort,
+				}
+				marshalledMessage, _ := json.Marshal(joinMessage)
+				v.(net.Conn).Write(marshalledMessage)
+			}
+
 			return
 		}
-		handleMessageFromTradeServer(buf, id, conn, db)
+		handleMessageFromTradeServer(buf[:n], id, conn, db, checkExpires)
 	}
 }
 
-func handleMessageFromTradeServer(message []byte, id uint32, conn net.Conn, db *sql.DB) {
-	var m shared.TradeMessage
+func handleMessageFromTradeServer(message []byte, id uint32, conn net.Conn, db *sql.DB, checkExpires bool) {
+	var m shared.ResolverMessage
 	_ = json.Unmarshal(message, &m)
 
 	switch m.Type {
 	case shared.AUTHENTICATION:
-		conn.Write([]byte(fmt.Sprintf("%d", tokenToUserId(m.Payload, db))))
+		conn.Write([]byte(fmt.Sprintf("%d", tokenToUserId(m.Payload, db, checkExpires))))
 	}
 }
 
@@ -165,10 +197,10 @@ func httpLoginHandler(db *sql.DB, sessionDuration int) func(http.ResponseWriter,
 	}
 }
 
-func httpAuthenticateHandler(db *sql.DB) func(http.ResponseWriter, *http.Request) {
+func httpAuthenticateHandler(db *sql.DB, checkExpires bool) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.FormValue("token")
-		id := tokenToUserId(token, db)
+		id := tokenToUserId(token, db, checkExpires)
 		if id != -1 {
 			fmt.Fprintf(w, fmt.Sprintf("%d", id))
 		} else {
@@ -194,7 +226,7 @@ func (u *user) newToken(sessionDuration int) string {
 	return base64.StdEncoding.EncodeToString(bt)
 }
 
-func tokenToUserId(encodedToken string, db *sql.DB) int {
+func tokenToUserId(encodedToken string, db *sql.DB, checkExpires bool) int {
 	var token Token
 	decodedToken, err := base64.StdEncoding.DecodeString(encodedToken)
 	LOG.CheckForError(err, false)
@@ -213,7 +245,7 @@ func tokenToUserId(encodedToken string, db *sql.DB) int {
 		return -1
 	}
 
-	if st.token == encodedToken && time.Now().Before(token.Experation) {
+	if st.token == encodedToken && (checkExpires && time.Now().Before(token.Experation)) {
 		return st.id
 	}
 

@@ -98,6 +98,10 @@ func (tm *ChannelMap) ManipulateValue(k interface{}, f func(interface{}) interfa
 	}
 }
 
+func (tm *ChannelMap) Raw() map[interface{}]interface{} {
+	return tm.m
+}
+
 func (tm *ChannelMap) listen() {
 	for {
 		select {
