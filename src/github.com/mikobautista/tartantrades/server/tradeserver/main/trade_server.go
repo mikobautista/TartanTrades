@@ -63,6 +63,7 @@ func main() {
 	connectMessage := shared.ResolverMessage{
 		Type:    shared.CONNECT,
 		Payload: thisHostPort,
+		Id:      uint32(*httpPort),
 	}
 	marshalledMessage, _ := json.Marshal(connectMessage)
 	conn.Write(marshalledMessage)
@@ -131,14 +132,14 @@ func onTradeServerConnection(conn net.Conn, db *sql.DB) {
 func listenToTradeServer(conn net.Conn, otherHostPort string, db *sql.DB) {
 	for {
 		buf := make([]byte, 1024)
-		var m shared.ResolverMessage
+		var m shared.TradeMessage
 		_, err := conn.Read(buf)
 		if err != nil {
-			LOG.LogError("Lost connection to %s", m.Payload)
+			LOG.LogError("Lost connection to %s", otherHostPort)
 			return
 		}
 		switch m.Type {
-		//TODO: Fill in
+		case shared.PREPARE:
 		}
 	}
 }

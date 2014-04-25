@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/mikobautista/tartantrades/channelmap"
@@ -43,6 +44,7 @@ type Token struct {
 type ResolverServer struct {
 	db              *sql.DB
 	connectionMap   channelmap.ChannelMap
+	apiSevers       channelslice.ChannelSlice
 	tradeServers    channelslice.ChannelSlice
 	tcpPort         int
 	httpPort        int
@@ -64,6 +66,7 @@ func NewResolverServer(
 
 	return &ResolverServer{
 		connectionMap:   channelmap.NewChannelMap(),
+		apiSevers:       channelslice.NewChannelSlice(),
 		tradeServers:    channelslice.NewChannelSlice(),
 		tcpPort:         tcpPort,
 		httpPort:        httpPort,
@@ -83,7 +86,7 @@ func (rs *ResolverServer) start() {
 	defer db.Close()
 
 	m := make(map[string]shared.HandlerType)
-	m["/servers/"] = httpGetTradeServerHandler(rs.tradeServers)
+	m["/servers/"] = httpGetTradeServerHandler(rs.apiSevers)
 	m["/login/"] = httpLoginHandler(rs.db, rs.sessionDuration)
 	m["/validate/"] = httpAuthenticateHandler(rs.db, rs.checkExpires)
 
@@ -165,6 +168,7 @@ func (rs *ResolverServer) onTradeServerConnection(conn net.Conn) {
 
 	rs.connectionMap.Put(h, conn)
 	rs.tradeServers.Append(connectionHostPort)
+	rs.apiSevers.Append(fmt.Sprintf("%s:%d", strings.Split(connectionHostPort, ":")[0], m.Id))
 
 	// Send a hash back to person contacting us.
 	go rs.listenToTradeServer(conn, h, connectionHostPort)
@@ -217,10 +221,10 @@ func (rs *ResolverServer) handleMessageFromTradeServer(message []byte, id uint32
 //                  HTTP handlers
 // ----------------------------------------------------
 
-func httpGetTradeServerHandler(tradeServers channelslice.ChannelSlice) func(http.ResponseWriter, *http.Request) {
+func httpGetTradeServerHandler(apiSevers channelslice.ChannelSlice) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Print out all of the tradeservers
-		for _, hostport := range tradeServers.GetStringList() {
+		for _, hostport := range apiSevers.GetStringList() {
 			fmt.Fprintf(w, "%s\n", hostport)
 		}
 	}
