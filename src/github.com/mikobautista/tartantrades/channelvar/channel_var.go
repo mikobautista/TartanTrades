@@ -9,6 +9,7 @@ type ChannelVar struct {
 	getChannel        chan getRequest
 	setChannel        chan setRequest
 	manipulateChannel chan manipulateRequest
+	valNil            bool
 }
 
 type getRequest struct {
@@ -30,6 +31,7 @@ var LOG = logging.NewLogger(true)
 func NewChannelVar() ChannelVar {
 	rv := ChannelVar{
 		v:                 make(map[interface{}]interface{}),
+		valNil:            true,
 		getChannel:        make(chan getRequest, 200),
 		setChannel:        make(chan setRequest, 200),
 		manipulateChannel: make(chan manipulateRequest, 200),
@@ -47,6 +49,10 @@ func (tm *ChannelVar) Get() interface{} {
 	case v := <-r:
 		return v
 	}
+}
+
+func (tm *ChannelVar) IsNil() bool {
+	return tm.valNil
 }
 
 func (tm *ChannelVar) Set(v interface{}) {
@@ -79,6 +85,7 @@ func (tm *ChannelVar) listen() {
 		case c := <-tm.getChannel:
 			c.r <- tm.v
 		case c := <-tm.setChannel:
+			tm.valNil = c.v == nil
 			tm.v = c.v
 			c.r <- struct{}{}
 		case c := <-tm.manipulateChannel:
