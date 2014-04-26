@@ -296,7 +296,7 @@ func tokenToUserId(encodedToken string, db *sql.DB, checkExpires bool) int {
 		return -1
 	}
 
-	if st.token == encodedToken && (checkExpires && time.Now().Before(token.Experation)) {
+	if st.token == encodedToken && (!checkExpires || time.Now().Before(token.Experation)) {
 		return st.id
 	}
 

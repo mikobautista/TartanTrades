@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
+	"strconv"
 
 	"github.com/mikobautista/tartantrades/channelmap"
 	"github.com/mikobautista/tartantrades/channelvar"
@@ -20,31 +22,40 @@ type TradeServer struct {
 	// ---------------------
 	//    Instance Details
 	// ---------------------
-	db               *sql.DB
-	resolverhostport string
-	tcpPort          int
-	httpPort         int
-	tableName        string
-	dbUser           string
-	dbPw             string
-	thisHostPort     string
-	tradeServers     channelmap.ChannelMap
-	serverId         uint32
+	db                   *sql.DB
+	resolverTcpHostPort  string
+	resolverHttpHostPort string
+	tcpPort              int
+	httpPort             int
+	tableName            string
+	dbUser               string
+	dbPw                 string
+	thisHostPort         string
+	serverId             uint32
+	// hostport:string -> conn net.conn
+	tradeServers channelmap.ChannelMap
 
 	// ---------------------
 	//    Acceptor variables
 	// ---------------------
-
-	acceptedId    channelvar.ChannelVar
-	promisedId    channelvar.ChannelVar
+	// uint32
+	acceptedId channelvar.ChannelVar
+	// uint32
+	promisedId channelvar.ChannelVar
+	// Transaction
 	acceptedValue channelvar.ChannelVar
-	pendingAccept channelvar.ChannelVar
 
 	// ---------------------
 	//    Proposer variables
 	// ---------------------
 	SellChannel            chan sellInfo
 	promiseRecievedChannel chan promise
+
+	// ---------------------
+	//        Data
+	// --------------------
+	// coordinate -> seller id
+	coordinateItemMap channelmap.ChannelMap
 }
 
 type sellInfo struct {
@@ -58,6 +69,11 @@ type promise struct {
 	from     uint32
 }
 
+type coordinate struct {
+	x string
+	y string
+}
+
 const (
 	CONN_HOST = "localhost"
 	CONN_TYPE = "tcp"
@@ -67,8 +83,10 @@ var (
 	LOG = logging.NewLogger(true)
 )
 
-func NewTradeSever(
-	resolverhostport string,
+func NewTradeServer(
+	resolverhost string,
+	resolverTcpPort int,
+	resolverHttpPort int,
 	tcpPort int,
 	httpPort int,
 	tableName string,
@@ -76,7 +94,8 @@ func NewTradeSever(
 	dbPw string) *TradeServer {
 
 	svr := &TradeServer{
-		resolverhostport:       resolverhostport,
+		resolverTcpHostPort:    fmt.Sprintf("%s:%d", resolverhost, resolverTcpPort),
+		resolverHttpHostPort:   fmt.Sprintf("%s:%d", resolverhost, resolverHttpPort),
 		tcpPort:                tcpPort,
 		httpPort:               httpPort,
 		tableName:              tableName,
@@ -86,10 +105,10 @@ func NewTradeSever(
 		acceptedId:             channelvar.NewChannelVar(),
 		promisedId:             channelvar.NewChannelVar(),
 		acceptedValue:          channelvar.NewChannelVar(),
-		pendingAccept:          channelvar.NewChannelVar(),
 		tradeServers:           channelmap.NewChannelMap(),
 		SellChannel:            make(chan sellInfo, 200),
 		promiseRecievedChannel: make(chan promise, 50),
+		coordinateItemMap:      channelmap.NewChannelMap(),
 	}
 	svr.acceptedId.Set(uint32(0))
 	svr.acceptedValue.Set(shared.Transaction{})
@@ -105,7 +124,7 @@ func (ts *TradeServer) Start() {
 
 	// Launch HTTP server listening for clients
 	m := make(map[string]shared.HandlerType)
-	m["/availableblocks/"] = httpGetAvailableBlocks
+	m["/availableblocks/"] = httpGetAvailableBlocks(ts)
 	m["/sell/"] = httpMarkBlockForSale(ts)
 	LOG.LogVerbose("Starting HTTP server on port %d", ts.httpPort)
 	go shared.NewHttpServer(ts.httpPort, m)
@@ -117,8 +136,8 @@ func (ts *TradeServer) Start() {
 	LOG.LogVerbose("Trade server TCP server started on %s", ts.thisHostPort)
 
 	// (miko) Connect to the resolver via TCP
-	LOG.LogVerbose("Connecting to resolver (%s)...", ts.resolverhostport)
-	conn, err := net.Dial("tcp", ts.resolverhostport)
+	LOG.LogVerbose("Connecting to resolver (%s)...", ts.resolverTcpHostPort)
+	conn, err := net.Dial("tcp", ts.resolverTcpHostPort)
 	LOG.CheckForError(err, true)
 
 	connectMessage := shared.ResolverMessage{
@@ -144,15 +163,19 @@ func (ts *TradeServer) Start() {
 }
 
 func main() {
-	var resolverhostport = flag.String("resolverhostport", "127.0.0.1:1234", "Resolver hostport")
+	var resolverhost = flag.String("resolverHost", "127.0.0.1", "Resolver hostport")
+	var resolverHttpPort = flag.Int("resolverHttpPort", 80, "Resolver http port")
+	var resolverTcpPort = flag.Int("resolverTcpPort", 1234, "Resolver tcp port")
 	var httpPort = flag.Int("httpport", 80, "Trading http port")
 	var tcpPort = flag.Int("tradeport", 1235, "Trading http port")
 	var tableName = flag.String("db", "commits", "Database accounts table name")
 	var dbUser = flag.String("db_user", "trader", "Database username")
 	var dbPw = flag.String("db_pw", "password", "Database password")
 	flag.Parse()
-	svr := NewTradeSever(
-		*resolverhostport,
+	svr := NewTradeServer(
+		*resolverhost,
+		*resolverTcpPort,
+		*resolverHttpPort,
 		*tcpPort,
 		*httpPort,
 		*tableName,
@@ -246,9 +269,7 @@ func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) 
 		case shared.ACCEPT:
 			if ts.promisedId.IsNil() || m.ProposedId >= ts.promisedId.Get().(uint32) {
 				LOG.LogVerbose("Accepting transaction")
-				ts.promisedId.Set(m.ProposedId)
-				ts.acceptedId.Set(m.ProposedId)
-				ts.applyTransaction(m.AcceptedValue)
+				ts.commit(m.ProposedId, m.AcceptedValue)
 				ts.sendAccepted(conn, m.ProposedId, m.AcceptedValue)
 			} else {
 				LOG.LogVerbose("Failed to accept Transaction")
@@ -258,6 +279,10 @@ func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) 
 }
 
 func (ts *TradeServer) applyTransaction(t shared.Transaction) {
+	switch t.Type {
+	case shared.SELL:
+		ts.coordinateItemMap.Put(coordinate{t.X, t.Y}, t.Id)
+	}
 
 }
 
@@ -265,15 +290,13 @@ func (ts *TradeServer) listenForNewItems() {
 	for {
 		select {
 		case item := <-ts.SellChannel:
-			//TODO remove this later
-			_ = item
-			LOG.LogVerbose("Selling item %s", item.item)
 			prepareRequestId := ts.acceptedId.Get().(uint32) + 1
 			ts.sendPrepare(prepareRequestId)
 			numberOfParticipants := len(ts.tradeServers.Raw())
 			quorum := numberOfParticipants / 2
 			acceptCount := 0
 			rejectCount := 0
+			waiting := true
 			var seen = make([]uint32, numberOfParticipants)
 			isSeen := func(i uint32) bool {
 				for _, v := range seen {
@@ -283,31 +306,36 @@ func (ts *TradeServer) listenForNewItems() {
 				}
 				return false
 			}
-
-			for {
-				select {
-				case p := <-ts.promiseRecievedChannel:
-					// Ignore old promises
-					if p.id == prepareRequestId {
-						if !isSeen(p.from) {
-							seen = append(seen, p.from)
-							if p.willHold {
-								acceptCount++
-							} else {
-								rejectCount++
-							}
-							// Check to see if we're done
-							if acceptCount+rejectCount >= numberOfParticipants {
-								// If majority promised
-								if acceptCount >= quorum {
-									LOG.LogVerbose("Majority accepted proposal (%d to %d)", acceptCount, rejectCount)
-									ts.sendAccept(p.id, item.item)
-									break
-
+			if numberOfParticipants == 0 {
+				LOG.LogVerbose("Only Server, commiting transaction.")
+				ts.commit(prepareRequestId, item.item)
+			} else {
+				for waiting {
+					select {
+					case p := <-ts.promiseRecievedChannel:
+						// Ignore old promises
+						if p.id == prepareRequestId {
+							if !isSeen(p.from) {
+								seen = append(seen, p.from)
+								if p.willHold {
+									acceptCount++
 								} else {
-									LOG.LogVerbose("Majority rejected proposal for %s (%d to %d)", item.item, acceptCount, rejectCount)
-									// If fail,try again later
-									ts.SellChannel <- item
+									rejectCount++
+								}
+								// Check to see if we're done
+								if acceptCount+rejectCount >= numberOfParticipants {
+									// If majority promised
+									if acceptCount >= quorum {
+										LOG.LogVerbose("Majority accepted proposal (%d to %d)", acceptCount, rejectCount)
+										ts.sendAccept(p.id, item.item)
+										ts.commit(prepareRequestId, item.item)
+										waiting = false
+
+									} else {
+										LOG.LogVerbose("Majority rejected proposal for %s (%d to %d)", item.item, acceptCount, rejectCount)
+										// If fail,try again later
+										ts.SellChannel <- item
+									}
 								}
 							}
 						}
@@ -318,20 +346,18 @@ func (ts *TradeServer) listenForNewItems() {
 	}
 }
 
+func (ts *TradeServer) commit(id uint32, item shared.Transaction) {
+	ts.promisedId.Set(id)
+	ts.acceptedId.Set(id)
+	ts.applyTransaction(item)
+}
+
 func (ts *TradeServer) sendPrepare(proposalId uint32) {
 	prepareMessage := shared.TradeMessage{
 		Type:       shared.PREPARE,
 		ProposedId: proposalId,
 	}
 	ts.blast(prepareMessage)
-}
-
-func (ts *TradeServer) blast(message shared.TradeMessage) {
-	for _, c := range ts.tradeServers.Raw() {
-		marshalledMessage, _ := json.Marshal(message)
-		_, err := (*(c.(*net.Conn))).Write(marshalledMessage)
-		LOG.CheckForError(err, false)
-	}
 }
 
 func (ts *TradeServer) sendPromise(proposerConn net.Conn, promiseType shared.TradeMessageType, promisedId uint32, acceptedId uint32, acceptedValue shared.Transaction) {
@@ -363,23 +389,48 @@ func (ts *TradeServer) sendAccepted(proposerConn net.Conn, proposalId uint32, ac
 	}
 	marshalledMessage, _ := json.Marshal(promiseMessage)
 	proposerConn.Write(marshalledMessage)
+}
 
+func (ts *TradeServer) blast(message shared.TradeMessage) {
+	for _, c := range ts.tradeServers.Raw() {
+		marshalledMessage, _ := json.Marshal(message)
+		_, err := (*(c.(*net.Conn))).Write(marshalledMessage)
+		LOG.CheckForError(err, false)
+	}
 }
 
 // ----------------------------------------------------
 //                  HTTP handlers
 // ----------------------------------------------------
 
-func httpGetAvailableBlocks(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
+func httpGetAvailableBlocks(ts *TradeServer) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		for c, id := range ts.coordinateItemMap.Raw() {
+			fmt.Fprintf(w, "(%s,%s) -> %d", c.(coordinate).x, c.(coordinate).y, id.(uint32))
+		}
+	}
 }
 
 func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.FormValue("token")
+		x := r.FormValue("x")
+		y := r.FormValue("y")
+		resp, err := http.Get(fmt.Sprintf("http://%s/validate/?token=%s", ts.resolverHttpHostPort, token))
+		LOG.CheckForError(err, false)
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		i, err := strconv.ParseUint(string(body), 10, 32)
+		if err != nil {
+			fmt.Fprintf(w, "Invalid token")
+			return
+		}
+
 		ts.SellChannel <- sellInfo{token, shared.Transaction{
-			Type:  shared.SELL,
-			Token: token,
+			Type: shared.SELL,
+			Id:   uint32(i),
+			X:    x,
+			Y:    y,
 		}}
 	}
 }

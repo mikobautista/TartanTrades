@@ -49,7 +49,9 @@ type Transaction struct {
 	To   uint32
 
 	// For Selling
-	Token string
+	Id uint32
+	X  string
+	Y  string
 }
 
 type TradeMessage struct {
