@@ -22,8 +22,11 @@ const (
 const (
 	WELCOME TradeMessageType = iota
 	PREPARE
+	PROMISE
+	NPROMISE
 	COMMIT
 	ACCEPT
+	ACCEPTED
 )
 
 type ResolverMessage struct {
@@ -32,8 +35,31 @@ type ResolverMessage struct {
 	Id      uint32
 }
 
+type TransactionType int
+
+const (
+	PURCHASE TransactionType = iota
+	SELL
+)
+
+type Transaction struct {
+	Type TransactionType
+	// For purchasing
+	From uint32
+	To   uint32
+
+	// For Selling
+	Token string
+}
+
 type TradeMessage struct {
-	Type    TradeMessageType
-	Payload string
-	Id      uint32
+	Type       TradeMessageType
+	Payload    string
+	FromNodeId uint32
+
+	ProposedId uint32
+	PromisedId uint32
+
+	AcceptedId    uint32
+	AcceptedValue Transaction
 }
