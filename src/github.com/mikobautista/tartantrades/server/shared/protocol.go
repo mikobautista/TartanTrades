@@ -21,6 +21,11 @@ const (
 
 const (
 	WELCOME TradeMessageType = iota
+	// AcceptedId holds current index
+	RECOVER_CHECK
+	RECOVER_NECESSARY
+
+	// Paxos
 	PREPARE
 	PROMISE
 	NPROMISE
