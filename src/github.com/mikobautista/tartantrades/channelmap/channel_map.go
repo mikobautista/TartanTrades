@@ -10,6 +10,7 @@ type ChannelMap struct {
 	putChannel        chan putRequest
 	remChannel        chan remRequest
 	manipulateChannel chan manipulateRequest
+	rawSetChannel     chan rawSetRequest
 }
 
 type getRequest struct {
@@ -34,6 +35,11 @@ type manipulateRequest struct {
 	r chan interface{}
 }
 
+type rawSetRequest struct {
+	v map[interface{}]interface{}
+	r chan interface{}
+}
+
 var LOG = logging.NewLogger(true)
 
 func NewChannelMap() ChannelMap {
@@ -43,6 +49,7 @@ func NewChannelMap() ChannelMap {
 		putChannel:        make(chan putRequest, 200),
 		remChannel:        make(chan remRequest, 200),
 		manipulateChannel: make(chan manipulateRequest, 200),
+		rawSetChannel:     make(chan rawSetRequest, 200),
 	}
 	go rv.listen()
 	return rv
@@ -102,6 +109,19 @@ func (tm *ChannelMap) Raw() map[interface{}]interface{} {
 	return tm.m
 }
 
+func (tm *ChannelMap) RawSet(v map[interface{}]interface{}) {
+	r := make(chan interface{})
+	tm.rawSetChannel <- rawSetRequest{
+		v: v,
+		r: r,
+	}
+	select {
+	case _ = <-r:
+		return
+	}
+
+}
+
 func (tm *ChannelMap) listen() {
 	for {
 		select {
@@ -118,6 +138,9 @@ func (tm *ChannelMap) listen() {
 			c.r <- struct{}{}
 		case c := <-tm.remChannel:
 			delete(tm.m, c.k)
+			c.r <- struct{}{}
+		case c := <-tm.rawSetChannel:
+			tm.m = c.v
 			c.r <- struct{}{}
 		}
 	}
