@@ -1,9 +1,8 @@
-package main
+package tradeserver
 
 import (
 	"database/sql"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -162,29 +161,6 @@ func (ts *TradeServer) Start() {
 	})
 }
 
-func main() {
-	var resolverhost = flag.String("resolverHost", "127.0.0.1", "Resolver hostport")
-	var resolverHttpPort = flag.Int("resolverHttpPort", 80, "Resolver http port")
-	var resolverTcpPort = flag.Int("resolverTcpPort", 1234, "Resolver tcp port")
-	var httpPort = flag.Int("httpport", 80, "Trading http port")
-	var tcpPort = flag.Int("tradeport", 1235, "Trading http port")
-	var tableName = flag.String("db", "commits", "Database accounts table name")
-	var dbUser = flag.String("db_user", "trader", "Database username")
-	var dbPw = flag.String("db_pw", "password", "Database password")
-	flag.Parse()
-	svr := NewTradeServer(
-		*resolverhost,
-		*resolverTcpPort,
-		*resolverHttpPort,
-		*tcpPort,
-		*httpPort,
-		*tableName,
-		*dbUser,
-		*dbPw)
-
-	svr.Start()
-}
-
 func (ts *TradeServer) listenToResolver(conn net.Conn, callback func(uint32)) {
 	buf := make([]byte, 1024)
 	hasIdAssigned := false
@@ -230,10 +206,19 @@ func (ts *TradeServer) onTradeServerConnection(conn net.Conn) {
 	switch m.Type {
 	case shared.WELCOME:
 		LOG.LogVerbose("Recieved Welcome from %s", m.Payload)
+		ts.checkRecovery(conn)
 		ts.tradeServers.Put(m.Payload, &conn)
 		go ts.listenToTradeServer(conn, m.Payload)
 	}
+}
 
+func (ts *TradeServer) checkRecovery(otherTradeServer net.Conn) {
+	recoveryCheckMessage := shared.TradeMessage{
+		Type:       shared.RECOVER_CHECK,
+		AcceptedId: ts.acceptedId.Get().(uint32),
+	}
+	marshalledMessage, _ := json.Marshal(recoveryCheckMessage)
+	otherTradeServer.Write(marshalledMessage)
 }
 
 func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) {
@@ -274,6 +259,20 @@ func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) 
 			} else {
 				LOG.LogVerbose("Failed to accept Transaction")
 			}
+		case shared.RECOVER_CHECK:
+			if m.AcceptedId < ts.acceptedId.Get().(uint32) {
+				marshalledMap, _ := json.Marshal(ts.coordinateItemMap.Raw())
+				recoverMessage := shared.TradeMessage{
+					Type:    shared.RECOVER_NECESSARY,
+					Payload: string(marshalledMap),
+				}
+				marshalledMessage, _ := json.Marshal(recoverMessage)
+				conn.Write(marshalledMessage)
+			}
+		case shared.RECOVER_NECESSARY:
+			var theirMap map[interface{}]interface{}
+			_ = json.Unmarshal([]byte(m.Payload), &theirMap)
+			ts.coordinateItemMap.RawSet(theirMap)
 		}
 	}
 }
