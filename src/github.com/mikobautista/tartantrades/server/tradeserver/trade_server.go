@@ -553,15 +553,34 @@ func httpPurchaseHandler(ts *TradeServer) func(http.ResponseWriter, *http.Reques
 		token := r.FormValue("token")
 		sItem := r.FormValue("item")
 		userid, err := ts.tokenToUserId(token)
-		purchaseid, err := strconv.ParseUint(sItem, 10, 32)
 		if err != nil {
 			fmt.Fprintf(w, "Invalid token")
 			return
 		}
-		LOG.LogVerbose("Selling item %d to %d", purchaseid, userid)
+		id, err := strconv.ParseUint(sItem, 10, 32)
+		purchaseid := uint32(id)
+
+		if err != nil {
+			fmt.Fprintf(w, "Cannot parse item id")
+			return
+		}
+		if purchaseid > ts.acceptedId.Get().(uint32) {
+			fmt.Fprintf(w, "Invalid Item")
+			return
+		}
+
+		s := set.NewUint32Set()
+		for _, i := range ts.getAllSoldItems() {
+			s.Add(i.Commit_id)
+		}
+		if s.Get(purchaseid) {
+			fmt.Fprintf(w, "Item has already been purchased")
+			return
+		}
+
 		ts.TransactionChannel <- transactionInfo{token, shared.Transaction{
 			Type:   shared.PURCHASE,
-			Commit: uint32(purchaseid),
+			Commit: purchaseid,
 			To:     uint32(userid),
 		}}
 	}
