@@ -57,9 +57,6 @@ type Transaction struct {
 	X  string
 	Y  string
 	Id uint32
-
-	// For debuging
-	Callback chan struct{}
 }
 
 type TradeMessage struct {
