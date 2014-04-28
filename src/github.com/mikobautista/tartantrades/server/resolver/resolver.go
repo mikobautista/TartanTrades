@@ -89,6 +89,7 @@ func (rs *ResolverServer) Start() {
 	m["/login/"] = httpLoginHandler(rs.db, rs.sessionDuration)
 	m["/validate/"] = httpAuthenticateHandler(rs.db, rs.checkExpires)
 	m["/register/"] = httpUserCreationHandler(rs)
+	m["/deleteaccount/"] = httpUserDeletionHandler(rs)
 
 	LOG.LogVerbose("Resolver HTTP server starting on %s:%d", CONN_HOST, rs.httpPort)
 	go shared.NewHttpServer(rs.httpPort, m)
@@ -248,6 +249,21 @@ func httpUserCreationHandler(rs *ResolverServer) func(http.ResponseWriter, *http
 			fmt.Fprintf(w, "User %s Created!", username)
 		} else {
 			fmt.Fprintf(w, "User %s Exists", username)
+		}
+	}
+}
+
+func httpUserDeletionHandler(rs *ResolverServer) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		LOG.LogVerbose("Attempting to delete user")
+		token := r.FormValue("token")
+		id := tokenToUserId(token, rs.db, rs.checkExpires)
+		if id != -1 {
+			_, err := rs.db.Exec("DELETE FROM credentials WHERE id=?", id)
+			LOG.CheckForError(err, false)
+			fmt.Fprintf(w, "User Deleted")
+		} else {
+			fmt.Fprintf(w, "Invalid token")
 		}
 	}
 }
