@@ -13,6 +13,7 @@ import (
 	"github.com/mikobautista/tartantrades/channelvar"
 	"github.com/mikobautista/tartantrades/logging"
 	"github.com/mikobautista/tartantrades/server/shared"
+	"github.com/mikobautista/tartantrades/set"
 
 	_ "github.com/ziutek/mymysql/godrv"
 )
@@ -29,7 +30,8 @@ type TradeServer struct {
 	databaseName         string
 	dbUser               string
 	dbPw                 string
-	tableName            string
+	commitTableName      string
+	buyTableName         string
 	dropTableOnStart     bool
 	createTableOnStart   bool
 	thisHostPort         string
@@ -50,7 +52,7 @@ type TradeServer struct {
 	// ---------------------
 	//    Proposer variables
 	// ---------------------
-	SellChannel            chan sellInfo
+	TransactionChannel     chan transactionInfo
 	promiseRecievedChannel chan promise
 
 	// ---------------------
@@ -59,16 +61,21 @@ type TradeServer struct {
 	// coordinate -> seller id
 }
 
-type sellInfo struct {
+type transactionInfo struct {
 	token string
 	item  shared.Transaction
 }
 
-type sellItem struct {
-	Commit_id string
+type availableItem struct {
+	Commit_id uint32
 	X         string
 	Y         string
 	Seller_id uint32
+}
+
+type soldItem struct {
+	Commit_id uint32
+	BuyerId   uint32
 }
 
 type promise struct {
@@ -78,9 +85,10 @@ type promise struct {
 }
 
 const (
-	CONN_HOST              = "localhost"
-	CONN_TYPE              = "tcp"
-	CREATE_TABLE_STATEMENT = "CREATE TABLE `?` ( `commit_id` int(11) NOT NULL AUTO_INCREMENT, `x` varchar(45) NOT NULL, `y` varchar(45) NOT NULL, `seller_id` INT NOT NULL, PRIMARY KEY (`commit_id`)); "
+	CONN_HOST                     = "localhost"
+	CONN_TYPE                     = "tcp"
+	CREATE_COMMIT_TABLE_STATEMENT = "CREATE TABLE `?` ( `commit_id` int(11) NOT NULL AUTO_INCREMENT, `x` varchar(45) NOT NULL, `y` varchar(45) NOT NULL, `seller_id` INT NOT NULL, PRIMARY KEY (`commit_id`));"
+	CREATE_BUY_TABLE_STATEMENT    = "CREATE TABLE `?` ( `commit_sold` INT NOT NULL, `buyer` INT NOT NULL, PRIMARY KEY (`commit_sold`)); "
 )
 
 var (
@@ -112,7 +120,7 @@ func NewTradeServer(
 		promisedId:             channelvar.NewChannelVar(),
 		acceptedValue:          channelvar.NewChannelVar(),
 		tradeServers:           channelmap.NewChannelMap(),
-		SellChannel:            make(chan sellInfo, 200),
+		TransactionChannel:     make(chan transactionInfo, 200),
 		promiseRecievedChannel: make(chan promise, 50),
 		dropTableOnStart:       dropTableOnStart,
 		createTableOnStart:     createTableOnStart,
@@ -134,6 +142,7 @@ func (ts *TradeServer) Start() {
 	m := make(map[string]shared.HandlerType)
 	m["/availableblocks/"] = httpGetAvailableBlocks(ts)
 	m["/sell/"] = httpMarkBlockForSale(ts)
+	m["/buy/"] = httpPurchaseHandler(ts)
 	LOG.LogVerbose("Starting HTTP server on port %d", ts.httpPort)
 	go shared.NewHttpServer(ts.httpPort, m)
 
@@ -159,17 +168,20 @@ func (ts *TradeServer) Start() {
 	go ts.listenForNewItems()
 
 	ts.listenToResolver(conn, func(id uint32) {
-		ts.tableName = fmt.Sprintf("%d", id)
+		ts.commitTableName = fmt.Sprintf("commits_%d", id)
+		ts.buyTableName = fmt.Sprintf("purchases_%d", id)
 
 		for {
 			if ts.dropTableOnStart {
-				LOG.LogVerbose("Dropping table %s", ts.tableName)
-				_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.tableName)
+				LOG.LogVerbose("Dropping tables %s and %s", ts.commitTableName, ts.buyTableName)
+				_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.commitTableName)
+				_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.buyTableName)
 				LOG.CheckForError(err, true)
 			}
 			if ts.createTableOnStart {
-				LOG.LogVerbose("Creating table %s", ts.tableName)
-				_, err = db.Exec(CREATE_TABLE_STATEMENT, ts.tableName)
+				LOG.LogVerbose("Creating tables %s and %s", ts.commitTableName, ts.buyTableName)
+				_, err = db.Exec(CREATE_COMMIT_TABLE_STATEMENT, ts.commitTableName)
+				_, err = db.Exec(CREATE_BUY_TABLE_STATEMENT, ts.buyTableName)
 				LOG.CheckForError(err, true)
 			}
 			// Listen for an incoming connection.
@@ -298,7 +310,7 @@ func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) 
 				LOG.LogVerbose("%s Does not need to recover...", otherHostPort)
 			}
 		case shared.RECOVER_NECESSARY:
-			var missedCommits []*sellItem
+			var missedCommits []*availableItem
 			_ = json.Unmarshal([]byte(m.Payload), &missedCommits)
 			ts.recoverTransactions(missedCommits)
 			ts.acceptedId.Set(m.AcceptedId)
@@ -307,11 +319,11 @@ func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) 
 	}
 }
 
-func (ts *TradeServer) getTransactionsAfterCommit(commitId uint32) []*sellItem {
-	return ts.getItemsWithQuery(ts.db.Query("SELECT * FROM `?` WHERE `commit_id` > ? ORDER BY commit_id ASC", ts.tableName, commitId))
+func (ts *TradeServer) getTransactionsAfterCommit(commitId uint32) []*availableItem {
+	return ts.getAllItemsWithQuery(ts.db.Query("SELECT * FROM `?` WHERE `commit_id` > ? ORDER BY commit_id ASC", ts.commitTableName, commitId))
 }
 
-func (ts *TradeServer) recoverTransactions(items []*sellItem) {
+func (ts *TradeServer) recoverTransactions(items []*availableItem) {
 	for _, item := range items {
 		LOG.LogVerbose("Marking (%s,%s)>%d as available", item.X, item.Y, item.Seller_id)
 		ts.markItemAsAvailable(item.X, item.Y, item.Seller_id)
@@ -319,21 +331,29 @@ func (ts *TradeServer) recoverTransactions(items []*sellItem) {
 }
 
 func (ts *TradeServer) markItemAsAvailable(x string, y string, sellerId uint32) {
-	_, err := ts.db.Exec("INSERT INTO `?` (`commit_id`, `x`, `y`, `seller_id`) VALUES (NULL, ?, ?, ?)", ts.tableName, x, y, sellerId)
+	_, err := ts.db.Exec("INSERT INTO `?` (`commit_id`, `x`, `y`, `seller_id`) VALUES (NULL, ?, ?, ?)", ts.commitTableName, x, y, sellerId)
 	LOG.CheckForError(err, true)
+}
+
+func (ts *TradeServer) markItemAsSold(commitId uint32, buyer uint32) {
+	//INSERT INTO `items`.`'purchases_2698766122'` (`commit_sold`, `buyer`) VALUES ('3', '1');
+	_, err := ts.db.Exec("INSERT INTO `?` (`commit_sold`, `buyer`) VALUES (?, ?)", ts.buyTableName, commitId, buyer)
+	LOG.CheckForError(err, false)
 }
 
 func (ts *TradeServer) applyTransaction(t shared.Transaction, commitId uint32) {
 	switch t.Type {
 	case shared.SELL:
 		ts.markItemAsAvailable(t.X, t.Y, t.Id)
+	case shared.PURCHASE:
+		ts.markItemAsSold(t.Commit, t.To)
 	}
 }
 
 func (ts *TradeServer) listenForNewItems() {
 	for {
 		select {
-		case item := <-ts.SellChannel:
+		case item := <-ts.TransactionChannel:
 			prepareRequestId := ts.acceptedId.Get().(uint32) + 1
 			ts.sendPrepare(prepareRequestId)
 			numberOfParticipants := len(ts.tradeServers.Raw())
@@ -378,7 +398,7 @@ func (ts *TradeServer) listenForNewItems() {
 									} else {
 										LOG.LogVerbose("Majority rejected proposal for %s (%d to %d)", item.item, acceptCount, rejectCount)
 										// If fail,try again later
-										ts.SellChannel <- item
+										ts.TransactionChannel <- item
 									}
 								}
 							}
@@ -450,18 +470,24 @@ func (ts *TradeServer) blast(message shared.TradeMessage) {
 func httpGetAvailableBlocks(ts *TradeServer) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items := ts.getAvailableItems()
+		s := set.NewUint32Set()
+		for _, i := range ts.getAllSoldItems() {
+			s.Add(i.Commit_id)
+		}
 		for _, item := range items {
-			fmt.Fprintf(w, "%s,%s>%d\n", item.X, item.Y, item.Seller_id)
+			if !s.Get(item.Commit_id) {
+				fmt.Fprintf(w, "%s,%s>%d:%d;", item.X, item.Y, item.Seller_id, item.Commit_id)
+			}
 		}
 	}
 }
 
-func (ts *TradeServer) getItemsWithQuery(rows *sql.Rows, err error) []*sellItem {
+func (ts *TradeServer) getAllItemsWithQuery(rows *sql.Rows, err error) []*availableItem {
 	LOG.CheckForError(err, false)
-	returnMe := make([]*sellItem, 0)
+	returnMe := make([]*availableItem, 0)
 	defer rows.Close()
 	for rows.Next() {
-		var item sellItem
+		var item availableItem
 		err := rows.Scan(&item.Commit_id, &item.X, &item.Y, &item.Seller_id)
 		LOG.CheckForError(err, false)
 		returnMe = append(returnMe, &item)
@@ -471,8 +497,27 @@ func (ts *TradeServer) getItemsWithQuery(rows *sql.Rows, err error) []*sellItem 
 	return returnMe
 }
 
-func (ts *TradeServer) getAvailableItems() []*sellItem {
-	return ts.getItemsWithQuery(ts.db.Query("select * from `?`", ts.tableName))
+func (ts *TradeServer) getSoldItemsWithQuery(rows *sql.Rows, err error) []*soldItem {
+	LOG.CheckForError(err, false)
+	returnMe := make([]*soldItem, 0)
+	defer rows.Close()
+	for rows.Next() {
+		var item soldItem
+		err := rows.Scan(&item.Commit_id, &item.BuyerId)
+		LOG.CheckForError(err, false)
+		returnMe = append(returnMe, &item)
+	}
+	err = rows.Err()
+	LOG.CheckForError(err, false)
+	return returnMe
+}
+
+func (ts *TradeServer) getAvailableItems() []*availableItem {
+	return ts.getAllItemsWithQuery(ts.db.Query("select * from `?`", ts.commitTableName))
+}
+
+func (ts *TradeServer) getAllSoldItems() []*soldItem {
+	return ts.getSoldItemsWithQuery(ts.db.Query("select * from `?`", ts.buyTableName))
 }
 
 func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Request) {
@@ -480,21 +525,44 @@ func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Reque
 		token := r.FormValue("token")
 		x := r.FormValue("x")
 		y := r.FormValue("y")
-		resp, err := http.Get(fmt.Sprintf("http://%s/validate/?token=%s", ts.resolverHttpHostPort, token))
-		LOG.CheckForError(err, false)
-		defer resp.Body.Close()
-		body, err := ioutil.ReadAll(resp.Body)
-		i, err := strconv.ParseUint(string(body), 10, 32)
+		i, err := ts.tokenToUserId(token)
 		if err != nil {
 			fmt.Fprintf(w, "Invalid token")
 			return
 		}
 
-		ts.SellChannel <- sellInfo{token, shared.Transaction{
+		ts.TransactionChannel <- transactionInfo{token, shared.Transaction{
 			Type: shared.SELL,
 			Id:   uint32(i),
 			X:    x,
 			Y:    y,
+		}}
+	}
+}
+
+func (ts *TradeServer) tokenToUserId(token string) (uint64, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s/validate/?token=%s", ts.resolverHttpHostPort, token))
+	LOG.CheckForError(err, false)
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	return strconv.ParseUint(string(body), 10, 32)
+}
+
+func httpPurchaseHandler(ts *TradeServer) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.FormValue("token")
+		sItem := r.FormValue("item")
+		userid, err := ts.tokenToUserId(token)
+		purchaseid, err := strconv.ParseUint(sItem, 10, 32)
+		if err != nil {
+			fmt.Fprintf(w, "Invalid token")
+			return
+		}
+		LOG.LogVerbose("Selling item %d to %d", purchaseid, userid)
+		ts.TransactionChannel <- transactionInfo{token, shared.Transaction{
+			Type:   shared.PURCHASE,
+			Commit: uint32(purchaseid),
+			To:     uint32(userid),
 		}}
 	}
 }
