@@ -144,6 +144,7 @@ func (ts *TradeServer) Start() {
 	m["/availableblocks/"] = httpGetAvailableBlocks(ts)
 	m["/sell/"] = httpMarkBlockForSale(ts)
 	m["/buy/"] = httpPurchaseHandler(ts)
+	m["/purchases/"] = httpGetPurchasedItemsHandler(ts)
 	m["/stop/"] = httpStopHandler
 	LOG.LogVerbose("Starting HTTP server on port %d", ts.httpPort)
 	go shared.NewHttpServer(ts.httpPort, m)
@@ -330,6 +331,10 @@ func (ts *TradeServer) getTransactionsAfterCommit(commitId uint32) []*availableI
 	return ts.getAllItemsWithQuery(ts.db.Query("SELECT * FROM `?` WHERE `commit_id` > ? ORDER BY commit_id ASC", ts.commitTableName, commitId))
 }
 
+func (ts *TradeServer) getTransactionWithId(id uint32) *availableItem {
+	return ts.getAllItemsWithQuery(ts.db.Query("SELECT * FROM `?` WHERE `commit_id` = ?", ts.commitTableName, id))[0]
+}
+
 func (ts *TradeServer) getSalesAfterCommit(commitId uint32) []*soldItem {
 	return ts.getSoldItemsWithQuery(ts.db.Query("SELECT * FROM `?` WHERE `commit_made` > ?", ts.buyTableName, commitId))
 }
@@ -355,7 +360,6 @@ func (ts *TradeServer) markItemAsAvailable(x string, y string, sellerId uint32) 
 }
 
 func (ts *TradeServer) markItemAsSold(soldCommit uint32, buyer uint32, commitMade uint32) {
-	//INSERT INTO `items`.`'purchases_2698766122'` (`commit_sold`, `buyer`) VALUES ('3', '1');
 	_, err := ts.db.Exec("INSERT INTO `?` (`commit_sold`, `buyer`, `commit_made`) VALUES (?, ?, ?)", ts.buyTableName, soldCommit, buyer, commitMade)
 	LOG.CheckForError(err, false)
 }
@@ -556,6 +560,25 @@ func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Reque
 			X:    x,
 			Y:    y,
 		}}
+	}
+}
+
+func httpGetPurchasedItemsHandler(ts *TradeServer) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.FormValue("token")
+		i, err := ts.tokenToUserId(token)
+		if err != nil {
+			fmt.Fprintf(w, "Invalid token")
+			return
+		}
+		LOG.LogVerbose("Getting purchases for user id %d", i)
+		items := ts.getSoldItemsWithQuery(ts.db.Query("select * from `?` where buyer=?", ts.buyTableName, i))
+		LOG.LogVerbose("Found %d purchases", len(items))
+
+		for _, item := range items {
+			t := ts.getTransactionWithId(item.Commit_id)
+			fmt.Fprintf(w, "%s,%s>%d:%d;", t.X, t.Y, t.Seller_id, t.Commit_id)
+		}
 	}
 }
 
