@@ -7,7 +7,9 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/mikobautista/tartantrades/channelmap"
 	"github.com/mikobautista/tartantrades/channelvar"
@@ -143,6 +145,7 @@ func (ts *TradeServer) Start() {
 	m["/availableblocks/"] = httpGetAvailableBlocks(ts)
 	m["/sell/"] = httpMarkBlockForSale(ts)
 	m["/buy/"] = httpPurchaseHandler(ts)
+	m["/stop/"] = httpStopHandler
 	LOG.LogVerbose("Starting HTTP server on port %d", ts.httpPort)
 	go shared.NewHttpServer(ts.httpPort, m)
 
@@ -595,4 +598,12 @@ func httpPurchaseHandler(ts *TradeServer) func(http.ResponseWriter, *http.Reques
 			To:     uint32(userid),
 		}}
 	}
+}
+
+func httpStopHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Stopping trade server in 5 seconds")
+	go func() {
+		time.Sleep(time.Second * 5)
+		os.Exit(10)
+	}()
 }
