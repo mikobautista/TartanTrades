@@ -26,9 +26,12 @@ type TradeServer struct {
 	resolverHttpHostPort string
 	tcpPort              int
 	httpPort             int
-	tableName            string
+	databaseName         string
 	dbUser               string
 	dbPw                 string
+	tableName            string
+	dropTableOnStart     bool
+	createTableOnStart   bool
 	thisHostPort         string
 	serverId             uint32
 	// hostport:string -> conn net.conn
@@ -54,12 +57,18 @@ type TradeServer struct {
 	//        Data
 	// --------------------
 	// coordinate -> seller id
-	coordinateItemMap channelmap.ChannelMap
 }
 
 type sellInfo struct {
 	token string
 	item  shared.Transaction
+}
+
+type sellItem struct {
+	commit_id string
+	x         string
+	y         string
+	seller_id string
 }
 
 type promise struct {
@@ -68,14 +77,10 @@ type promise struct {
 	from     uint32
 }
 
-type coordinate struct {
-	x string
-	y string
-}
-
 const (
-	CONN_HOST = "localhost"
-	CONN_TYPE = "tcp"
+	CONN_HOST              = "localhost"
+	CONN_TYPE              = "tcp"
+	CREATE_TABLE_STATEMENT = "CREATE TABLE `?` ( `commit_id` VARCHAR(45) NOT NULL, `x` VARCHAR(45) NOT NULL, `y` VARCHAR(45) NOT NULL, `seller_id` VARCHAR(45) NOT NULL, PRIMARY KEY (`commit_id`));"
 )
 
 var (
@@ -88,16 +93,18 @@ func NewTradeServer(
 	resolverHttpPort int,
 	tcpPort int,
 	httpPort int,
-	tableName string,
+	databaseName string,
 	dbUser string,
-	dbPw string) *TradeServer {
+	dbPw string,
+	dropTableOnStart bool,
+	createTableOnStart bool) *TradeServer {
 
 	svr := &TradeServer{
 		resolverTcpHostPort:    fmt.Sprintf("%s:%d", resolverhost, resolverTcpPort),
 		resolverHttpHostPort:   fmt.Sprintf("%s:%d", resolverhost, resolverHttpPort),
 		tcpPort:                tcpPort,
 		httpPort:               httpPort,
-		tableName:              tableName,
+		databaseName:           databaseName,
 		dbUser:                 dbUser,
 		dbPw:                   dbPw,
 		thisHostPort:           fmt.Sprintf("%s:%d", CONN_HOST, tcpPort),
@@ -107,7 +114,8 @@ func NewTradeServer(
 		tradeServers:           channelmap.NewChannelMap(),
 		SellChannel:            make(chan sellInfo, 200),
 		promiseRecievedChannel: make(chan promise, 50),
-		coordinateItemMap:      channelmap.NewChannelMap(),
+		dropTableOnStart:       dropTableOnStart,
+		createTableOnStart:     createTableOnStart,
 	}
 	svr.acceptedId.Set(uint32(0))
 	svr.acceptedValue.Set(shared.Transaction{})
@@ -116,9 +124,10 @@ func NewTradeServer(
 
 func (ts *TradeServer) Start() {
 	LOG.LogVerbose("Establishing Connection to Database...")
-	db, err := sql.Open("mymysql", fmt.Sprintf("%s/%s/%s", ts.tableName, ts.dbUser, ts.dbPw))
+	db, err := sql.Open("mymysql", fmt.Sprintf("%s/%s/%s", ts.databaseName, ts.dbUser, ts.dbPw))
 	ts.db = db
 	LOG.CheckForError(err, true)
+
 	defer db.Close()
 
 	// Launch HTTP server listening for clients
@@ -150,7 +159,19 @@ func (ts *TradeServer) Start() {
 	go ts.listenForNewItems()
 
 	ts.listenToResolver(conn, func(id uint32) {
+		ts.tableName = fmt.Sprintf("%d", id)
+
 		for {
+			if ts.dropTableOnStart {
+				LOG.LogVerbose("Dropping table %s", ts.tableName)
+				_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.tableName)
+				LOG.CheckForError(err, true)
+			}
+			if ts.createTableOnStart {
+				LOG.LogVerbose("Creating table %s", ts.tableName)
+				_, err = db.Exec(CREATE_TABLE_STATEMENT, ts.tableName)
+				LOG.CheckForError(err, true)
+			}
 			// Listen for an incoming connection.
 			conn, err := l.Accept()
 			LOG.CheckForError(err, false)
@@ -206,13 +227,16 @@ func (ts *TradeServer) onTradeServerConnection(conn net.Conn) {
 	switch m.Type {
 	case shared.WELCOME:
 		LOG.LogVerbose("Recieved Welcome from %s", m.Payload)
-		ts.checkRecovery(conn)
+		if len(ts.tradeServers.Raw()) == 0 {
+			ts.checkRecovery(conn)
+		}
 		ts.tradeServers.Put(m.Payload, &conn)
 		go ts.listenToTradeServer(conn, m.Payload)
 	}
 }
 
 func (ts *TradeServer) checkRecovery(otherTradeServer net.Conn) {
+	LOG.LogVerbose("Checking to see if recovery is necessary...")
 	recoveryCheckMessage := shared.TradeMessage{
 		Type:       shared.RECOVER_CHECK,
 		AcceptedId: ts.acceptedId.Get().(uint32),
@@ -261,28 +285,36 @@ func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) 
 			}
 		case shared.RECOVER_CHECK:
 			if m.AcceptedId < ts.acceptedId.Get().(uint32) {
-				marshalledMap, _ := json.Marshal(ts.coordinateItemMap.Raw())
+				//foo := ts.coordinateItemMap.Raw()
+				//marshalledMap, _ := json.Marshal(foo)
+				//LOG.LogVerbose("%s Needs to recover, sending data (%s)...", otherHostPort, string(marshalledMap))
 				recoverMessage := shared.TradeMessage{
-					Type:    shared.RECOVER_NECESSARY,
-					Payload: string(marshalledMap),
+					Type: shared.RECOVER_NECESSARY,
+					//Payload:    string(marshalledMap),
+					AcceptedId: ts.acceptedId.Get().(uint32),
 				}
 				marshalledMessage, _ := json.Marshal(recoverMessage)
 				conn.Write(marshalledMessage)
+			} else {
+				LOG.LogVerbose("%s Does not need to recover...", otherHostPort)
 			}
 		case shared.RECOVER_NECESSARY:
 			var theirMap map[interface{}]interface{}
 			_ = json.Unmarshal([]byte(m.Payload), &theirMap)
-			ts.coordinateItemMap.RawSet(theirMap)
+			//ts.coordinateItemMap.RawSet(theirMap)
+			ts.acceptedId.Set(m.AcceptedId)
+			LOG.LogVerbose("Recovery is necessary - recovering data from %s (now on accepted id %d)", otherHostPort, m.AcceptedId)
 		}
 	}
 }
 
-func (ts *TradeServer) applyTransaction(t shared.Transaction) {
+func (ts *TradeServer) applyTransaction(t shared.Transaction, commitId uint32) {
+	LOG.LogVerbose("Table is %s", ts.tableName)
 	switch t.Type {
 	case shared.SELL:
-		ts.coordinateItemMap.Put(coordinate{t.X, t.Y}, t.Id)
+		_, err := ts.db.Exec("INSERT INTO `?` (`commit_id`, `x`, `y`, `seller_id`) VALUES (?, ?, ?, ?)", ts.tableName, commitId, t.X, t.Y, t.Id)
+		LOG.CheckForError(err, true)
 	}
-
 }
 
 func (ts *TradeServer) listenForNewItems() {
@@ -348,7 +380,7 @@ func (ts *TradeServer) listenForNewItems() {
 func (ts *TradeServer) commit(id uint32, item shared.Transaction) {
 	ts.promisedId.Set(id)
 	ts.acceptedId.Set(id)
-	ts.applyTransaction(item)
+	ts.applyTransaction(item, id)
 }
 
 func (ts *TradeServer) sendPrepare(proposalId uint32) {
@@ -404,10 +436,27 @@ func (ts *TradeServer) blast(message shared.TradeMessage) {
 
 func httpGetAvailableBlocks(ts *TradeServer) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		for c, id := range ts.coordinateItemMap.Raw() {
-			fmt.Fprintf(w, "(%s,%s) -> %d", c.(coordinate).x, c.(coordinate).y, id.(uint32))
+		items := ts.getAvailableItems()
+		for _, item := range items {
+			fmt.Fprintf(w, "%s,%s > %s", item.x, item.y, item.seller_id)
 		}
 	}
+}
+
+func (ts *TradeServer) getAvailableItems() []*sellItem {
+	rows, err := ts.db.Query("select * from `?`", ts.tableName)
+	LOG.CheckForError(err, false)
+	returnMe := make([]*sellItem, 0)
+	defer rows.Close()
+	for rows.Next() {
+		var item sellItem
+		err := rows.Scan(&item.commit_id, &item.x, &item.y, &item.seller_id)
+		LOG.CheckForError(err, false)
+		returnMe = append(returnMe, &item)
+	}
+	err = rows.Err()
+	LOG.CheckForError(err, false)
+	return returnMe
 }
 
 func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Request) {
