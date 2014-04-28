@@ -65,10 +65,10 @@ type sellInfo struct {
 }
 
 type sellItem struct {
-	commit_id string
-	x         string
-	y         string
-	seller_id string
+	Commit_id string
+	X         string
+	Y         string
+	Seller_id uint32
 }
 
 type promise struct {
@@ -80,7 +80,7 @@ type promise struct {
 const (
 	CONN_HOST              = "localhost"
 	CONN_TYPE              = "tcp"
-	CREATE_TABLE_STATEMENT = "CREATE TABLE `?` ( `commit_id` VARCHAR(45) NOT NULL, `x` VARCHAR(45) NOT NULL, `y` VARCHAR(45) NOT NULL, `seller_id` VARCHAR(45) NOT NULL, PRIMARY KEY (`commit_id`));"
+	CREATE_TABLE_STATEMENT = "CREATE TABLE `?` ( `commit_id` int(11) NOT NULL AUTO_INCREMENT, `x` varchar(45) NOT NULL, `y` varchar(45) NOT NULL, `seller_id` INT NOT NULL, PRIMARY KEY (`commit_id`)); "
 )
 
 var (
@@ -285,12 +285,11 @@ func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) 
 			}
 		case shared.RECOVER_CHECK:
 			if m.AcceptedId < ts.acceptedId.Get().(uint32) {
-				//foo := ts.coordinateItemMap.Raw()
-				//marshalledMap, _ := json.Marshal(foo)
-				//LOG.LogVerbose("%s Needs to recover, sending data (%s)...", otherHostPort, string(marshalledMap))
+				marshalledData, _ := json.Marshal(ts.getTransactionsAfterCommit(m.AcceptedId))
+				LOG.LogVerbose("%s Needs to recover, sending data (%s)...", otherHostPort, string(marshalledData))
 				recoverMessage := shared.TradeMessage{
-					Type: shared.RECOVER_NECESSARY,
-					//Payload:    string(marshalledMap),
+					Type:       shared.RECOVER_NECESSARY,
+					Payload:    string(marshalledData),
 					AcceptedId: ts.acceptedId.Get().(uint32),
 				}
 				marshalledMessage, _ := json.Marshal(recoverMessage)
@@ -299,21 +298,35 @@ func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) 
 				LOG.LogVerbose("%s Does not need to recover...", otherHostPort)
 			}
 		case shared.RECOVER_NECESSARY:
-			var theirMap map[interface{}]interface{}
-			_ = json.Unmarshal([]byte(m.Payload), &theirMap)
-			//ts.coordinateItemMap.RawSet(theirMap)
+			var missedCommits []*sellItem
+			_ = json.Unmarshal([]byte(m.Payload), &missedCommits)
+			ts.recoverTransactions(missedCommits)
 			ts.acceptedId.Set(m.AcceptedId)
 			LOG.LogVerbose("Recovery is necessary - recovering data from %s (now on accepted id %d)", otherHostPort, m.AcceptedId)
 		}
 	}
 }
 
+func (ts *TradeServer) getTransactionsAfterCommit(commitId uint32) []*sellItem {
+	return ts.getItemsWithQuery(ts.db.Query("SELECT * FROM `?` WHERE `commit_id` > ? ORDER BY commit_id ASC", ts.tableName, commitId))
+}
+
+func (ts *TradeServer) recoverTransactions(items []*sellItem) {
+	for _, item := range items {
+		LOG.LogVerbose("Marking (%s,%s)>%d as available", item.X, item.Y, item.Seller_id)
+		ts.markItemAsAvailable(item.X, item.Y, item.Seller_id)
+	}
+}
+
+func (ts *TradeServer) markItemAsAvailable(x string, y string, sellerId uint32) {
+	_, err := ts.db.Exec("INSERT INTO `?` (`commit_id`, `x`, `y`, `seller_id`) VALUES (NULL, ?, ?, ?)", ts.tableName, x, y, sellerId)
+	LOG.CheckForError(err, true)
+}
+
 func (ts *TradeServer) applyTransaction(t shared.Transaction, commitId uint32) {
-	LOG.LogVerbose("Table is %s", ts.tableName)
 	switch t.Type {
 	case shared.SELL:
-		_, err := ts.db.Exec("INSERT INTO `?` (`commit_id`, `x`, `y`, `seller_id`) VALUES (?, ?, ?, ?)", ts.tableName, commitId, t.X, t.Y, t.Id)
-		LOG.CheckForError(err, true)
+		ts.markItemAsAvailable(t.X, t.Y, t.Id)
 	}
 }
 
@@ -438,25 +451,28 @@ func httpGetAvailableBlocks(ts *TradeServer) func(w http.ResponseWriter, r *http
 	return func(w http.ResponseWriter, r *http.Request) {
 		items := ts.getAvailableItems()
 		for _, item := range items {
-			fmt.Fprintf(w, "%s,%s > %s", item.x, item.y, item.seller_id)
+			fmt.Fprintf(w, "%s,%s>%d\n", item.X, item.Y, item.Seller_id)
 		}
 	}
 }
 
-func (ts *TradeServer) getAvailableItems() []*sellItem {
-	rows, err := ts.db.Query("select * from `?`", ts.tableName)
+func (ts *TradeServer) getItemsWithQuery(rows *sql.Rows, err error) []*sellItem {
 	LOG.CheckForError(err, false)
 	returnMe := make([]*sellItem, 0)
 	defer rows.Close()
 	for rows.Next() {
 		var item sellItem
-		err := rows.Scan(&item.commit_id, &item.x, &item.y, &item.seller_id)
+		err := rows.Scan(&item.Commit_id, &item.X, &item.Y, &item.Seller_id)
 		LOG.CheckForError(err, false)
 		returnMe = append(returnMe, &item)
 	}
 	err = rows.Err()
 	LOG.CheckForError(err, false)
 	return returnMe
+}
+
+func (ts *TradeServer) getAvailableItems() []*sellItem {
+	return ts.getItemsWithQuery(ts.db.Query("select * from `?`", ts.tableName))
 }
 
 func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Request) {
