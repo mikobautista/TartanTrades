@@ -60,9 +60,10 @@ type Transaction struct {
 }
 
 type TradeMessage struct {
-	Type       TradeMessageType
-	Payload    string
-	FromNodeId uint32
+	Type             TradeMessageType
+	Payload          string
+	Recovery_Payload string
+	FromNodeId       uint32
 
 	ProposedId uint32
 	PromisedId uint32
