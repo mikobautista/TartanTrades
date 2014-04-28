@@ -50,13 +50,16 @@ const (
 type Transaction struct {
 	Type TransactionType
 	// For purchasing
-	From uint32
-	To   uint32
+	Commit uint32
+	To     uint32
 
 	// For Selling
-	Id uint32
 	X  string
 	Y  string
+	Id uint32
+
+	// For debuging
+	Callback chan struct{}
 }
 
 type TradeMessage struct {
