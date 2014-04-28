@@ -345,6 +345,7 @@ func (ts *TradeServer) applyTransaction(t shared.Transaction, commitId uint32) {
 	switch t.Type {
 	case shared.SELL:
 		ts.markItemAsAvailable(t.X, t.Y, t.Id)
+		t.Callback <- struct{}{}
 	case shared.PURCHASE:
 		ts.markItemAsSold(t.Commit, t.To)
 	}
@@ -525,18 +526,28 @@ func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Reque
 		token := r.FormValue("token")
 		x := r.FormValue("x")
 		y := r.FormValue("y")
+		wait := r.FormValue("wait")
 		i, err := ts.tokenToUserId(token)
 		if err != nil {
 			fmt.Fprintf(w, "Invalid token")
 			return
 		}
 
+		callback := make(chan struct{})
+
 		ts.TransactionChannel <- transactionInfo{token, shared.Transaction{
-			Type: shared.SELL,
-			Id:   uint32(i),
-			X:    x,
-			Y:    y,
+			Type:     shared.SELL,
+			Id:       uint32(i),
+			X:        x,
+			Y:        y,
+			Callback: callback,
 		}}
+		if len(wait) != 0 {
+			select {
+			case _ = <-callback:
+				return
+			}
+		}
 	}
 }
 
