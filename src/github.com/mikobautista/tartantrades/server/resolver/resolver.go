@@ -243,7 +243,7 @@ func httpUserCreationHandler(rs *ResolverServer) func(http.ResponseWriter, *http
 		pw := r.FormValue("password")
 		_, err := queryForUser(username, rs.db)
 		if err != nil {
-			_, err := rs.db.Exec("INSERT INTO credentials (`id`, `username`, `password`, `token`) VALUES (NULL, ?, ?, ?)", username, pw, "")
+			_, err := rs.db.Exec("INSERT INTO credentials (`username`, `password`, `token`) VALUES (?, ?, ?)", username, pw, "")
 			LOG.CheckForError(err, false)
 			fmt.Fprintf(w, "User %s Created!", username)
 		} else {
