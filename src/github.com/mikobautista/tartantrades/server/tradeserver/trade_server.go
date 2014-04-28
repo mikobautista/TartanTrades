@@ -173,20 +173,20 @@ func (ts *TradeServer) Start() {
 	ts.listenToResolver(conn, func(id uint32) {
 		ts.commitTableName = fmt.Sprintf("commits_%d", id)
 		ts.buyTableName = fmt.Sprintf("purchases_%d", id)
+		if ts.dropTableOnStart {
+			LOG.LogVerbose("Dropping tables %s and %s", ts.commitTableName, ts.buyTableName)
+			_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.commitTableName)
+			_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.buyTableName)
+			LOG.CheckForError(err, true)
+		}
+		if ts.createTableOnStart {
+			LOG.LogVerbose("Creating tables %s and %s", ts.commitTableName, ts.buyTableName)
+			_, err = db.Exec(CREATE_COMMIT_TABLE_STATEMENT, ts.commitTableName)
+			_, err = db.Exec(CREATE_BUY_TABLE_STATEMENT, ts.buyTableName)
+			LOG.CheckForError(err, true)
+		}
 
 		for {
-			if ts.dropTableOnStart {
-				LOG.LogVerbose("Dropping tables %s and %s", ts.commitTableName, ts.buyTableName)
-				_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.commitTableName)
-				_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.buyTableName)
-				LOG.CheckForError(err, true)
-			}
-			if ts.createTableOnStart {
-				LOG.LogVerbose("Creating tables %s and %s", ts.commitTableName, ts.buyTableName)
-				_, err = db.Exec(CREATE_COMMIT_TABLE_STATEMENT, ts.commitTableName)
-				_, err = db.Exec(CREATE_BUY_TABLE_STATEMENT, ts.buyTableName)
-				LOG.CheckForError(err, true)
-			}
 			// Listen for an incoming connection.
 			conn, err := l.Accept()
 			LOG.CheckForError(err, false)
@@ -348,7 +348,6 @@ func (ts *TradeServer) applyTransaction(t shared.Transaction, commitId uint32) {
 	switch t.Type {
 	case shared.SELL:
 		ts.markItemAsAvailable(t.X, t.Y, t.Id)
-		t.Callback <- struct{}{}
 	case shared.PURCHASE:
 		ts.markItemAsSold(t.Commit, t.To)
 	}
@@ -529,28 +528,18 @@ func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Reque
 		token := r.FormValue("token")
 		x := r.FormValue("x")
 		y := r.FormValue("y")
-		wait := r.FormValue("wait")
 		i, err := ts.tokenToUserId(token)
 		if err != nil {
 			fmt.Fprintf(w, "Invalid token")
 			return
 		}
 
-		callback := make(chan struct{})
-
 		ts.TransactionChannel <- transactionInfo{token, shared.Transaction{
-			Type:     shared.SELL,
-			Id:       uint32(i),
-			X:        x,
-			Y:        y,
-			Callback: callback,
+			Type: shared.SELL,
+			Id:   uint32(i),
+			X:    x,
+			Y:    y,
 		}}
-		if len(wait) != 0 {
-			select {
-			case _ = <-callback:
-				return
-			}
-		}
 	}
 }
 
