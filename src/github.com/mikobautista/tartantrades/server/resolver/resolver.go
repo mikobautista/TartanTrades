@@ -88,6 +88,7 @@ func (rs *ResolverServer) Start() {
 	m["/servers/"] = httpGetTradeServerHandler(rs.apiSevers)
 	m["/login/"] = httpLoginHandler(rs.db, rs.sessionDuration)
 	m["/validate/"] = httpAuthenticateHandler(rs.db, rs.checkExpires)
+	m["/register/"] = httpUserCreationHandler(rs)
 
 	LOG.LogVerbose("Resolver HTTP server starting on %s:%d", CONN_HOST, rs.httpPort)
 	go shared.NewHttpServer(rs.httpPort, m)
@@ -235,6 +236,25 @@ func httpAuthenticateHandler(db *sql.DB, checkExpires bool) func(http.ResponseWr
 		}
 	}
 }
+
+func httpUserCreationHandler(rs *ResolverServer) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		username := r.FormValue("username")
+		pw := r.FormValue("password")
+		_, err := queryForUser(username, rs.db)
+		if err != nil {
+			_, err := rs.db.Exec("INSERT INTO credentials (`id`, `username`, `password`, `token`) VALUES (NULL, ?, ?, ?)", username, pw, "")
+			LOG.CheckForError(err, false)
+			fmt.Fprintf(w, "User %s Created!", username)
+		} else {
+			fmt.Fprintf(w, "User %s Exists", username)
+		}
+	}
+}
+
+// ----------------------------------------------------
+//                HTTP helper functions
+// ----------------------------------------------------
 
 func queryForUser(name string, db *sql.DB) (*user, error) {
 	row := db.QueryRow("select * from credentials where username=?", name)
