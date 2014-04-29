@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,6 +91,7 @@ func (rs *ResolverServer) Start() {
 	m["/validate/"] = httpAuthenticateHandler(rs.db, rs.checkExpires)
 	m["/register/"] = httpUserCreationHandler(rs)
 	m["/deleteaccount/"] = httpUserDeletionHandler(rs)
+	m["/lookup/"] = httpGetUsernameHandler(rs)
 
 	LOG.LogVerbose("Resolver HTTP server starting on %s:%d", CONN_HOST, rs.httpPort)
 	go shared.NewHttpServer(rs.httpPort, m)
@@ -209,6 +211,25 @@ func httpGetTradeServerHandler(apiSevers channelslice.ChannelSlice) func(http.Re
 	}
 }
 
+func httpGetUsernameHandler(rs *ResolverServer) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sid := r.FormValue("id")
+		id, err := strconv.ParseUint(sid, 10, 32)
+		userid := uint32(id)
+		if err != nil {
+			fmt.Fprintf(w, "Cannot parse item id")
+			return
+		}
+		username, err := queryForUsername(userid, rs.db)
+		LOG.CheckForError(err, false)
+		if err != nil {
+			fmt.Fprintf(w, "No such user")
+			return
+		}
+		fmt.Fprintf(w, username)
+	}
+}
+
 func httpLoginHandler(db *sql.DB, sessionDuration int) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		username := r.FormValue("username")
@@ -279,6 +300,13 @@ func queryForUser(name string, db *sql.DB) (*user, error) {
 	u := new(user)
 	err := row.Scan(&u.id, &u.username, &u.password, &u.token)
 	return u, err
+}
+
+func queryForUsername(id uint32, db *sql.DB) (string, error) {
+	var name string
+	row := db.QueryRow("select username from credentials where id=?", id)
+	err := row.Scan(&name)
+	return name, err
 }
 
 func (u *user) newToken(sessionDuration int) string {
