@@ -122,8 +122,9 @@ func (rs *ResolverServer) onTradeServerConnection(conn net.Conn) {
 	_ = json.Unmarshal(buf[:n], &m)
 
 	connectionHostPort := m.Payload
+	remoteHostPort := conn.RemoteAddr().String()
 	h := GetHash(connectionHostPort)
-	LOG.LogVerbose("ID for %s is %d", connectionHostPort, h)
+	LOG.LogVerbose("ID for %s is %d", remoteHostPort, h)
 
 	jId := shared.ResolverMessage{
 		Type: shared.ID_ASSIGNMENT,
@@ -138,18 +139,18 @@ func (rs *ResolverServer) onTradeServerConnection(conn net.Conn) {
 	for _, v := range rs.connectionMap.Raw() {
 		joinMessage := shared.ResolverMessage{
 			Type:    shared.TRADE_SERVER_JOIN,
-			Payload: connectionHostPort,
+			Payload: remoteHostPort,
 		}
 		marshalledMessage, _ := json.Marshal(joinMessage)
 		v.(net.Conn).Write(marshalledMessage)
 	}
 
 	rs.connectionMap.Put(h, conn)
-	rs.tradeServers.Append(connectionHostPort)
-	rs.apiSevers.Append(fmt.Sprintf("%s:%d", strings.Split(connectionHostPort, ":")[0], m.Id))
+	rs.tradeServers.Append(remoteHostPort)
+	rs.apiSevers.Append(fmt.Sprintf("%s:%d", strings.Split(remoteHostPort, ":")[0], m.Id))
 
 	// Send a hash back to person contacting us.
-	go rs.listenToTradeServer(conn, h, connectionHostPort)
+	go rs.listenToTradeServer(conn, h, remoteHostPort)
 }
 
 func GetHash(key string) uint32 {
