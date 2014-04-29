@@ -212,6 +212,7 @@ func httpLoginHandler(db *sql.DB, sessionDuration int) func(http.ResponseWriter,
 	return func(w http.ResponseWriter, r *http.Request) {
 		username := r.FormValue("username")
 		pw := r.FormValue("password")
+		LOG.LogVerbose("Login request for %s, %s", username, pw)
 		u, err := queryForUser(username, db)
 		if err != nil {
 			LOG.CheckForError(err, false)

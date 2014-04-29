@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+    <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceLarge"
+            android:text="Registration"
+            android:id="@+id/textView"
+            android:layout_marginTop="30dp" android:layout_alignParentTop="true"
+            android:layout_centerHorizontal="true"/>
+    <EditText
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:inputType="textPersonName"
+            android:ems="10"
+            android:id="@+id/editText" android:layout_below="@+id/textView" android:layout_centerHorizontal="true"
+            android:layout_marginTop="53dp" android:hint="username"/>
+    <EditText
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:inputType="textPassword"
+            android:ems="10"
+            android:id="@+id/editText2" android:layout_below="@+id/editText" android:layout_centerHorizontal="true"
+            android:layout_marginTop="41dp" android:hint="password"/>
+    <EditText
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:inputType="date"
+            android:ems="10"
+            android:id="@+id/editText3"
+            android:layout_marginTop="52dp" android:layout_below="@+id/editText2"
+            android:layout_centerHorizontal="true" android:hint="birthdate"/>
+    <Button
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Register"
+            android:id="@+id/button" android:layout_below="@+id/editText3" android:layout_alignStart="@+id/editText3"
+            android:layout_marginTop="51dp" android:layout_alignEnd="@+id/editText3"/>
+</RelativeLayout>

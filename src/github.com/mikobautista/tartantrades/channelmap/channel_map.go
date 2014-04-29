@@ -119,7 +119,6 @@ func (tm *ChannelMap) RawSet(v map[interface{}]interface{}) {
 	case _ = <-r:
 		return
 	}
-
 }
 
 func (tm *ChannelMap) listen() {
