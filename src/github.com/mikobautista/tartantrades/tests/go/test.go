@@ -21,7 +21,7 @@ func performTest(s, msg string, t *testing.T) {
 	fmt.Println("-------" + msg + "-------")
 	cmd := exec.Command("python", s, "-v")
 	var out bytes.Buffer
-    cmd.Stdout = &out
+	cmd.Stdout = &out
 	err := cmd.Run()
 	if err != nil {
 		t.Error("error occurred")
