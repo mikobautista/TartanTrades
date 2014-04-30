@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,6 +91,7 @@ func (rs *ResolverServer) Start() {
 	m["/validate/"] = httpAuthenticateHandler(rs.db, rs.checkExpires)
 	m["/register/"] = httpUserCreationHandler(rs)
 	m["/deleteaccount/"] = httpUserDeletionHandler(rs)
+	m["/lookup/"] = httpGetUsernameHandler(rs)
 
 	LOG.LogVerbose("Resolver HTTP server starting on %s:%d", CONN_HOST, rs.httpPort)
 	go shared.NewHttpServer(rs.httpPort, m)
@@ -122,8 +124,9 @@ func (rs *ResolverServer) onTradeServerConnection(conn net.Conn) {
 	_ = json.Unmarshal(buf[:n], &m)
 
 	connectionHostPort := m.Payload
+	remoteHostPort := conn.RemoteAddr().String()
 	h := GetHash(connectionHostPort)
-	LOG.LogVerbose("ID for %s is %d", connectionHostPort, h)
+	LOG.LogVerbose("ID for %s is %d", remoteHostPort, h)
 
 	jId := shared.ResolverMessage{
 		Type: shared.ID_ASSIGNMENT,
@@ -138,18 +141,18 @@ func (rs *ResolverServer) onTradeServerConnection(conn net.Conn) {
 	for _, v := range rs.connectionMap.Raw() {
 		joinMessage := shared.ResolverMessage{
 			Type:    shared.TRADE_SERVER_JOIN,
-			Payload: connectionHostPort,
+			Payload: remoteHostPort,
 		}
 		marshalledMessage, _ := json.Marshal(joinMessage)
 		v.(net.Conn).Write(marshalledMessage)
 	}
 
 	rs.connectionMap.Put(h, conn)
-	rs.tradeServers.Append(connectionHostPort)
-	rs.apiSevers.Append(fmt.Sprintf("%s:%d", strings.Split(connectionHostPort, ":")[0], m.Id))
+	rs.tradeServers.Append(remoteHostPort)
+	rs.apiSevers.Append(fmt.Sprintf("%s:%d", strings.Split(remoteHostPort, ":")[0], m.Id))
 
 	// Send a hash back to person contacting us.
-	go rs.listenToTradeServer(conn, h, connectionHostPort)
+	go rs.listenToTradeServer(conn, h, remoteHostPort)
 }
 
 func GetHash(key string) uint32 {
@@ -208,10 +211,30 @@ func httpGetTradeServerHandler(apiSevers channelslice.ChannelSlice) func(http.Re
 	}
 }
 
+func httpGetUsernameHandler(rs *ResolverServer) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sid := r.FormValue("id")
+		id, err := strconv.ParseUint(sid, 10, 32)
+		userid := uint32(id)
+		if err != nil {
+			fmt.Fprintf(w, "Cannot parse item id")
+			return
+		}
+		username, err := queryForUsername(userid, rs.db)
+		LOG.CheckForError(err, false)
+		if err != nil {
+			fmt.Fprintf(w, "No such user")
+			return
+		}
+		fmt.Fprintf(w, username)
+	}
+}
+
 func httpLoginHandler(db *sql.DB, sessionDuration int) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		username := r.FormValue("username")
 		pw := r.FormValue("password")
+		LOG.LogVerbose("Login request for %s, %s", username, pw)
 		u, err := queryForUser(username, db)
 		if err != nil {
 			LOG.CheckForError(err, false)
@@ -277,6 +300,13 @@ func queryForUser(name string, db *sql.DB) (*user, error) {
 	u := new(user)
 	err := row.Scan(&u.id, &u.username, &u.password, &u.token)
 	return u, err
+}
+
+func queryForUsername(id uint32, db *sql.DB) (string, error) {
+	var name string
+	row := db.QueryRow("select username from credentials where id=?", id)
+	err := row.Scan(&name)
+	return name, err
 }
 
 func (u *user) newToken(sessionDuration int) string {
