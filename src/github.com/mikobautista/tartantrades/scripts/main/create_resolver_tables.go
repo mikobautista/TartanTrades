@@ -15,7 +15,7 @@ const (
 )
 
 var (
-	LOG = logging.NewLogger(true)
+	LOG = logging.NewLogger(false)
 )
 
 func main() {

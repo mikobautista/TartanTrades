@@ -16,3 +16,4 @@ os.system("./tradeservertest -n 6 -e 'User Deleted' -hp 'localhost:8888' -token 
 time.sleep(1)
 
 os.system("killall resolverRunner > /dev/null 2>&1")
+os.system("killall tradeServerRunner > /dev/null 2>&1")
