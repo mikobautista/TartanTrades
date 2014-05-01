@@ -8,20 +8,24 @@ import (
 )
 
 func Test_All(t *testing.T) {
+	verbose := true
+	db_user := "root"
+	db_pw := "password"
+
 	performBuild(t, "main/tradeservertest.go")
 	performBuild(t, "../../server/main/resolverRunner.go")
 	performBuild(t, "../../server/main/tradeServerRunner.go")
 
-	performTest("../python/setup.py", "Performing Setup", t)
+	performTest("../python/setup.py", "Performing Setup", t, verbose, db_user, db_pw)
 
-	performTest("../python/testSingleServer.py", "Test Single Server", t)
-	performTest("../python/testMultipleServer.py", "Test Multiple Server", t)
-	performTest("../python/testBuy.py", "Test Buy", t)
-	performTest("../python/testRegisterUser.py", "Test Register User", t)
-	performTest("../python/testLateStart.py", "Test Late Start", t)
-	performTest("../python/testRecovery.py", "Test Recovery", t)
+	performTest("../python/testSingleServer.py", "Test Single Server", t, verbose, db_user, db_pw)
+	performTest("../python/testMultipleServer.py", "Test Multiple Server", t, verbose, db_user, db_pw)
+	performTest("../python/testBuy.py", "Test Buy", t, verbose, db_user, db_pw)
+	performTest("../python/testRegisterUser.py", "Test Register User", t, verbose, db_user, db_pw)
+	performTest("../python/testLateStart.py", "Test Late Start", t, verbose, db_user, db_pw)
+	performTest("../python/testRecovery.py", "Test Recovery", t, verbose, db_user, db_pw)
 
-	performTest("../python/teardown.py", "Performing Teardown", t)
+	performTest("../python/teardown.py", "Performing Teardown", t, verbose, db_user, db_pw)
 
 	t.Log("all tests passed")
 }
@@ -34,9 +38,15 @@ func performBuild(t *testing.T, s string) {
 	}
 }
 
-func performTest(s, msg string, t *testing.T) {
+func performTest(s, msg string, t *testing.T, v bool, db_user, db_pw string) {
 	fmt.Println("-------" + msg + "-------")
-	cmd := exec.Command("python", s, "-v")
+	var cmd *exec.Cmd
+	if v {
+		cmd = exec.Command("python", s, db_user, db_pw, "-v")
+	} else {
+		cmd = exec.Command("python", s, db_user, db_pw)
+	}
+	
 	var out bytes.Buffer
     cmd.Stdout = &out
 	err := cmd.Run()

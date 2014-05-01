@@ -8,10 +8,12 @@ parser = OptionParser()
 parser.add_option("-v", action="store_true", dest="verbose", default=False)
 args = parser.parse_args()
 VERBOSE = args[0].verbose
+db_user = args[1][0]
+db_pw = args[1][1]
 
 # Create a resolver 
 if VERBOSE: print "Starting 1 resolver..."
-os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user=root -db_pw=password > /dev/null 2>&1)&")
+os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user={} -db_pw={} > /dev/null 2>&1)&".format(db_user, db_pw))
 time.sleep(1)
 
 # Create a new account

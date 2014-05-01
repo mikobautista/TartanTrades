@@ -8,12 +8,14 @@ parser = OptionParser()
 parser.add_option("-v", action="store_true", dest="verbose", default=False)
 args = parser.parse_args()
 VERBOSE = args[0].verbose
+db_user = args[1][0]
+db_pw = args[1][1]
 
 # Create a resolver and a tradeserver runner
 if VERBOSE: print "Starting 1 resolver and 1 tradeserver..."
-os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user=root -db_pw=password > /dev/null 2>&1)&")
+os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user={} -db_pw={} > /dev/null 2>&1)&".format(db_user, db_pw))
 time.sleep(1)
-os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1111 --tradeport=2222 -dropTableOnStart=true -createTableOnStart=true -db_user=root -db_pw=password > /dev/null 2>&1)&")
+os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1111 --tradeport=2222 -dropTableOnStart=true -createTableOnStart=true -db_user={} -db_pw={} > /dev/null 2>&1)&".format(db_user, db_pw))
 time.sleep(1)
 
 token = urllib2.urlopen("http://localhost:8888/login/?username=foo&password=bar").read().strip()

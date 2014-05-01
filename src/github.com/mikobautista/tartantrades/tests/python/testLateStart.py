@@ -8,10 +8,12 @@ parser = OptionParser()
 parser.add_option("-v", action="store_true", dest="verbose", default=False)
 args = parser.parse_args()
 VERBOSE = args[0].verbose
+db_user = args[1][0]
+db_pw = args[1][1]
 
 # Create a resolver
 if VERBOSE: print "Starting 1 resolver..."
-os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user=root -db_pw=password > /dev/null 2>&1)&")
+os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user={} -db_pw={} > /dev/null 2>&1)&".format(db_user, db_pw))
 time.sleep(1)
 
 token = urllib2.urlopen("http://localhost:8888/login/?username=foo&password=bar").read().strip()
@@ -19,7 +21,7 @@ userid = urllib2.urlopen("http://localhost:8888/validate/?token={}".format(token
 
 # Start the early trade server
 if VERBOSE: print "Starting 1 early tradeserver..."
-os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1111 --tradeport=2222 -dropTableOnStart=true -createTableOnStart=true -db_user=root -db_pw=password > /dev/null 2>&1)&")
+os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1111 --tradeport=2222 -dropTableOnStart=true -createTableOnStart=true -db_user={} -db_pw={} > /dev/null 2>&1)&".format(db_user, db_pw))
 time.sleep(1)
 
 # Create three sell requests
@@ -31,7 +33,7 @@ time.sleep(2) # wait for changes to be committed
 
 # Start the late trade server
 if VERBOSE: print "Starting 1 late tradeserver..."
-os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1112 --tradeport=2223 -dropTableOnStart=true -createTableOnStart=true -db_user=root -db_pw=password > /dev/null 2>&1)&")
+os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1112 --tradeport=2223 -dropTableOnStart=true -createTableOnStart=true -db_user={} -db_pw={} > /dev/null 2>&1)&".format(db_user, db_pw))
 time.sleep(2) # wait for trade server to recover
 
 # Check that the late trade server also registered the request
