@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mikobautista/tartantrades/channelmap"
+	"github.com/mikobautista/tartantrades/channelslice"
 	"github.com/mikobautista/tartantrades/channelvar"
 	"github.com/mikobautista/tartantrades/logging"
 	"github.com/mikobautista/tartantrades/server/shared"
@@ -37,7 +39,8 @@ type TradeServer struct {
 	thisHostPort         string
 	serverId             uint32
 	// hostport:string -> conn net.conn
-	tradeServers channelmap.ChannelMap
+	tradeServers     channelmap.ChannelMap
+	aliveConnections channelslice.ChannelSlice
 
 	// ---------------------
 	//    Acceptor variables
@@ -62,8 +65,9 @@ type TradeServer struct {
 }
 
 type transactionInfo struct {
-	token string
-	item  shared.Transaction
+	token    string
+	item     shared.Transaction
+	response chan string
 }
 
 type availableItem struct {
@@ -90,6 +94,8 @@ const (
 	CONN_TYPE                     = "tcp"
 	CREATE_COMMIT_TABLE_STATEMENT = "CREATE TABLE `?` ( `commit_id` int(11) NOT NULL AUTO_INCREMENT, `x` varchar(45) NOT NULL, `y` varchar(45) NOT NULL, `seller_id` INT NOT NULL, PRIMARY KEY (`commit_id`));"
 	CREATE_BUY_TABLE_STATEMENT    = "CREATE TABLE `?` ( `commit_sold` INT NOT NULL, `buyer` INT NOT NULL, `commit_made` INT NOT NULL, PRIMARY KEY (`commit_sold`)); "
+	CONNECTION_RETRY_SECONDS      = 5
+	PAXOS_ACCEPT_TIMEOUT          = 5
 )
 
 var (
@@ -121,6 +127,7 @@ func NewTradeServer(
 		promisedId:             channelvar.NewChannelVar(),
 		acceptedValue:          channelvar.NewChannelVar(),
 		tradeServers:           channelmap.NewChannelMap(),
+		aliveConnections:       channelslice.NewChannelSlice(),
 		TransactionChannel:     make(chan transactionInfo, 200),
 		promiseRecievedChannel: make(chan promise, 50),
 		dropTableOnStart:       dropTableOnStart,
@@ -170,67 +177,86 @@ func (ts *TradeServer) Start() {
 
 	go ts.listenForNewItems()
 
-	ts.listenToResolver(conn, func(id uint32) {
-		ts.commitTableName = fmt.Sprintf("commits_%d", id)
-		ts.buyTableName = fmt.Sprintf("purchases_%d", id)
-		if ts.dropTableOnStart {
-			LOG.LogVerbose("Dropping tables %s and %s", ts.commitTableName, ts.buyTableName)
-			_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.commitTableName)
-			_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.buyTableName)
-			LOG.CheckForError(err, true)
-		}
-		if ts.createTableOnStart {
-			LOG.LogVerbose("Creating tables %s and %s", ts.commitTableName, ts.buyTableName)
-			_, err = db.Exec(CREATE_COMMIT_TABLE_STATEMENT, ts.commitTableName)
-			_, err = db.Exec(CREATE_BUY_TABLE_STATEMENT, ts.buyTableName)
-			LOG.CheckForError(err, true)
-		}
-
-		for {
-			// Listen for an incoming connection.
-			conn, err := l.Accept()
-			LOG.CheckForError(err, false)
-
-			// Handle connections in a new goroutine.
-			go ts.onTradeServerConnection(conn)
-		}
-	})
-}
-
-func (ts *TradeServer) listenToResolver(conn net.Conn, callback func(uint32)) {
 	buf := make([]byte, 1024)
-	hasIdAssigned := false
-	var m shared.ResolverMessage
-	for {
-		n, err := conn.Read(buf)
+	var message shared.ResolverMessage
+	n, err := conn.Read(buf)
+	LOG.CheckForError(err, true)
+	_ = json.Unmarshal(buf[:n], &message)
+
+	switch message.Type {
+	case shared.ID_ASSIGNMENT:
+		ts.serverId = message.Id
+	}
+
+	ts.commitTableName = fmt.Sprintf("commits_%d", ts.serverId)
+	ts.buyTableName = fmt.Sprintf("purchases_%d", ts.serverId)
+
+	if ts.dropTableOnStart {
+		LOG.LogVerbose("Dropping tables %s and %s", ts.commitTableName, ts.buyTableName)
+		_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.commitTableName)
+		_, err = db.Exec("DROP TABLE IF EXISTS `?`", ts.buyTableName)
 		LOG.CheckForError(err, true)
-		_ = json.Unmarshal(buf[:n], &m)
+	}
 
-		switch m.Type {
-		case shared.ID_ASSIGNMENT:
-			if !hasIdAssigned {
-				ts.serverId = m.Id
-				LOG.LogVerbose("Id of %d has been assigned, listening for trade server connections...", m.Id)
-				go callback(m.Id)
-			}
-		case shared.TRADE_SERVER_JOIN:
-			LOG.LogVerbose("Connecting to new trade server: %s", m.Payload)
-			newConn, err := net.Dial("tcp", m.Payload)
-			ts.tradeServers.Put(m.Payload, &newConn)
-			LOG.CheckForError(err, false)
-			connectMessage := shared.TradeMessage{
-				Type:    shared.WELCOME,
-				Payload: ts.thisHostPort,
-			}
-			marshalledMessage, _ := json.Marshal(connectMessage)
-			newConn.Write(marshalledMessage)
-			go ts.listenToTradeServer(newConn, m.Payload)
+	if ts.createTableOnStart {
+		LOG.LogVerbose("Creating tables %s and %s", ts.commitTableName, ts.buyTableName)
+		_, err = db.Exec(CREATE_COMMIT_TABLE_STATEMENT, ts.commitTableName)
+		_, err = db.Exec(CREATE_BUY_TABLE_STATEMENT, ts.buyTableName)
+		LOG.CheckForError(err, true)
+	}
 
-		case shared.TRADE_SERVER_DROP:
-			LOG.LogVerbose("Dropping trade server: %s", m.Payload)
-			ts.tradeServers.Rem(m.Payload)
+	LOG.LogVerbose("Connecting to other trade servers...")
+	resp, err := http.Get(fmt.Sprintf("http://%s/pservers/", ts.resolverHttpHostPort))
+	LOG.CheckForError(err, false)
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	otherServers := strings.Split(string(body), ",")
+	for _, server := range otherServers {
+		if len(server) == 0 {
+			continue
+		}
+		info := strings.Split(server, "-")
+		if info[0] != ts.thisHostPort {
+			LOG.LogVerbose("Connecting to %s", info[0])
+
+			sConn := ts.connectToTradeServer(info[0])
+			if sConn != nil {
+				ts.aliveConnections.Append(info[0])
+				sConnId, err := strconv.ParseUint(info[1], 10, 32)
+				LOG.CheckForError(err, false)
+				psConnid := uint32(sConnId)
+				ts.checkRecovery(sConn)
+				go ts.listenToTradeServer(sConn, info[0], psConnid)
+			}
 		}
 	}
+
+	LOG.LogVerbose("Listening for incoming connections...")
+
+	for {
+		// Listen for an incoming connection.
+		conn, err := l.Accept()
+		LOG.CheckForError(err, false)
+
+		// Handle connections in a new goroutine.
+		go ts.onTradeServerConnection(conn)
+	}
+}
+
+func (ts *TradeServer) connectToTradeServer(otherTcpHostPort string) net.Conn {
+	newConn, err := net.Dial("tcp", otherTcpHostPort)
+	if err != nil {
+		return nil
+	}
+	ts.tradeServers.Put(otherTcpHostPort, &newConn)
+	connectMessage := shared.TradeMessage{
+		Type:       shared.WELCOME,
+		Payload:    ts.thisHostPort,
+		FromNodeId: ts.serverId,
+	}
+	marshalledMessage, _ := json.Marshal(connectMessage)
+	newConn.Write(marshalledMessage)
+	return newConn
 }
 
 func (ts *TradeServer) onTradeServerConnection(conn net.Conn) {
@@ -242,11 +268,9 @@ func (ts *TradeServer) onTradeServerConnection(conn net.Conn) {
 	switch m.Type {
 	case shared.WELCOME:
 		LOG.LogVerbose("Recieved Welcome from %s", m.Payload)
-		if len(ts.tradeServers.Raw()) == 0 {
-			ts.checkRecovery(conn)
-		}
 		ts.tradeServers.Put(m.Payload, &conn)
-		go ts.listenToTradeServer(conn, m.Payload)
+		ts.aliveConnections.Append(m.Payload)
+		go ts.listenToTradeServer(conn, m.Payload, m.FromNodeId)
 	}
 }
 
@@ -260,14 +284,32 @@ func (ts *TradeServer) checkRecovery(otherTradeServer net.Conn) {
 	otherTradeServer.Write(marshalledMessage)
 }
 
-func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string) {
+func (ts *TradeServer) listenToTradeServer(conn net.Conn, otherHostPort string, otherId uint32) {
 	for {
 		buf := make([]byte, 1024)
 		var m shared.TradeMessage
 		n, err := conn.Read(buf)
 		if err != nil {
 			LOG.LogError("Lost connection to %s", otherHostPort)
-			return
+			ts.aliveConnections.Rem(otherHostPort)
+			if ts.serverId > otherId {
+				for {
+					time.Sleep(time.Second * CONNECTION_RETRY_SECONDS)
+					LOG.LogVerbose("Attempting to reconnect to %s", otherHostPort)
+					if ts.aliveConnections.Contains(otherHostPort) {
+						LOG.LogVerbose("Connection has already been established")
+						return
+					}
+					conn = ts.connectToTradeServer(otherHostPort)
+					if conn != nil {
+						ts.aliveConnections.Append(otherHostPort)
+						LOG.LogVerbose("Reconnection to %s successful", otherHostPort)
+						break
+					}
+				}
+			} else {
+				return
+			}
 		}
 
 		LOG.LogVerbose("Read %s from %s", string(buf), otherHostPort)
@@ -377,6 +419,7 @@ func (ts *TradeServer) listenForNewItems() {
 	for {
 		select {
 		case item := <-ts.TransactionChannel:
+			LOG.LogVerbose("Read new transaction request")
 			prepareRequestId := ts.acceptedId.Get().(uint32) + 1
 			ts.sendPrepare(prepareRequestId)
 			numberOfParticipants := len(ts.tradeServers.Raw())
@@ -397,6 +440,7 @@ func (ts *TradeServer) listenForNewItems() {
 				LOG.LogVerbose("Only Server, commiting transaction.")
 				ts.commit(prepareRequestId, item.item)
 			} else {
+				responseTimeout := time.After(time.Second * PAXOS_ACCEPT_TIMEOUT)
 				for waiting {
 					select {
 					case p := <-ts.promiseRecievedChannel:
@@ -410,22 +454,25 @@ func (ts *TradeServer) listenForNewItems() {
 									rejectCount++
 								}
 								// Check to see if we're done
-								if acceptCount+rejectCount >= numberOfParticipants {
-									// If majority promised
-									if acceptCount >= quorum {
-										LOG.LogVerbose("Majority accepted proposal (%d to %d)", acceptCount, rejectCount)
-										ts.sendAccept(p.id, item.item)
-										ts.commit(prepareRequestId, item.item)
-										waiting = false
-
-									} else {
-										LOG.LogVerbose("Majority rejected proposal for %s (%d to %d)", item.item, acceptCount, rejectCount)
-										// If fail,try again later
-										ts.TransactionChannel <- item
-									}
+								// If majority promised
+								if acceptCount >= quorum {
+									LOG.LogVerbose("Majority accepted proposal (%d to %d)", acceptCount, rejectCount)
+									ts.sendAccept(p.id, item.item)
+									ts.commit(prepareRequestId, item.item)
+									waiting = false
+									item.response <- "OK"
+								} else if rejectCount >= quorum {
+									LOG.LogVerbose("Majority rejected proposal for %s (%d to %d)", item.item, acceptCount, rejectCount)
+									// If fail,try again later
+									waiting = false
+									item.response <- "FAIL"
 								}
 							}
 						}
+					case <-responseTimeout:
+						LOG.LogVerbose("Timeout: proposal for %s is rejected", item.item)
+						waiting = false
+						item.response <- "ERROR: TIMEOUT - TRY AGAIN"
 					}
 				}
 			}
@@ -481,8 +528,8 @@ func (ts *TradeServer) sendAccepted(proposerConn net.Conn, proposalId uint32, ac
 func (ts *TradeServer) blast(message shared.TradeMessage) {
 	for _, c := range ts.tradeServers.Raw() {
 		marshalledMessage, _ := json.Marshal(message)
-		_, err := (*(c.(*net.Conn))).Write(marshalledMessage)
-		LOG.CheckForError(err, false)
+		// Ignore err because the connection might be closed (this is okay)
+		(*(c.(*net.Conn))).Write(marshalledMessage)
 	}
 }
 
@@ -554,12 +601,20 @@ func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Reque
 			return
 		}
 
+		response := make(chan string)
+
 		ts.TransactionChannel <- transactionInfo{token, shared.Transaction{
 			Type: shared.SELL,
 			Id:   uint32(i),
 			X:    x,
-			Y:    y,
-		}}
+			Y:    y},
+			response,
+		}
+		LOG.LogVerbose("Requesting transaction")
+		select {
+		case s := <-response:
+			fmt.Fprintf(w, s)
+		}
 	}
 }
 
@@ -620,11 +675,18 @@ func httpPurchaseHandler(ts *TradeServer) func(http.ResponseWriter, *http.Reques
 			return
 		}
 
+		response := make(chan string)
+
 		ts.TransactionChannel <- transactionInfo{token, shared.Transaction{
 			Type:   shared.PURCHASE,
 			Commit: purchaseid,
-			To:     uint32(userid),
-		}}
+			To:     uint32(userid)},
+			response,
+		}
+		select {
+		case s := <-response:
+			fmt.Fprintf(w, s)
+		}
 	}
 }
 

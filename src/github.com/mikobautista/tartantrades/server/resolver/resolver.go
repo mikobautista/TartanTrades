@@ -46,7 +46,7 @@ type ResolverServer struct {
 	db              *sql.DB
 	connectionMap   channelmap.ChannelMap
 	apiSevers       channelslice.ChannelSlice
-	tradeServers    channelslice.ChannelSlice
+	tradeServers    channelmap.ChannelMap
 	tcpPort         int
 	httpPort        int
 	tableName       string
@@ -69,7 +69,7 @@ func NewResolverServer(
 	return &ResolverServer{
 		connectionMap:   channelmap.NewChannelMap(),
 		apiSevers:       channelslice.NewChannelSlice(),
-		tradeServers:    channelslice.NewChannelSlice(),
+		tradeServers:    channelmap.NewChannelMap(),
 		tcpPort:         tcpPort,
 		httpPort:        httpPort,
 		tableName:       tableName,
@@ -90,6 +90,7 @@ func (rs *ResolverServer) Start() {
 
 	m := make(map[string]shared.HandlerType)
 	m["/servers/"] = httpGetTradeServerHandler(rs.apiSevers)
+	m["/pservers/"] = httpGetTradeServerTcpHandler(rs.tradeServers)
 	m["/login/"] = httpLoginHandler(rs.db, rs.sessionDuration)
 	m["/validate/"] = httpAuthenticateHandler(rs.db, rs.checkExpires)
 	m["/register/"] = httpUserCreationHandler(rs)
@@ -140,64 +141,22 @@ func (rs *ResolverServer) onTradeServerConnection(conn net.Conn) {
 	conn.Write(mId)
 	exists := rs.servers.Get(h)
 
-	// Notify trade servers of new server joining
-	for i, v := range rs.connectionMap.Raw() {
-		// Only notify servers that aren't trying to reconnect to the trade server
-		// (or notify all servers on the first connection)
-		if i.(uint32) < h || !exists {
-			joinMessage := shared.ResolverMessage{
-				Type:    shared.TRADE_SERVER_JOIN,
-				Payload: connectionHostPort,
-				Id:      h,
-			}
-			marshalledMessage, _ := json.Marshal(joinMessage)
-			v.(net.Conn).Write(marshalledMessage)
-		}
-	}
-
 	rs.connectionMap.Put(h, conn)
 	if !exists {
 		LOG.LogVerbose("Adding %s to trade servers", connectionHostPort)
-		rs.tradeServers.Append(connectionHostPort)
+		rs.tradeServers.Put(h, connectionHostPort)
 		rs.apiSevers.Append(fmt.Sprintf("%s:%d", strings.Split(connectionHostPort, ":")[0], m.Id))
 		rs.servers.Add(h)
 	} else {
 		LOG.LogVerbose("%s has connected before", connectionHostPort)
 	}
-
-	// Send a hash back to person contacting us.
-	go rs.listenToTradeServer(conn, h, connectionHostPort)
+	conn.Close()
 }
 
 func GetHash(key string) uint32 {
 	hasher := fnv.New32()
 	hasher.Write([]byte(key))
 	return hasher.Sum32()
-}
-
-func (rs *ResolverServer) listenToTradeServer(conn net.Conn, id uint32, connectionHostPort string) {
-	buf := make([]byte, 1024)
-
-	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			LOG.LogVerbose("TCP error for trade server id %d (%s). Waiting for reconnection...", id, connectionHostPort)
-			conn.Close()
-			rs.connectionMap.Rem(id)
-			return
-		}
-		rs.handleMessageFromTradeServer(buf[:n], id, conn)
-	}
-}
-
-func (rs *ResolverServer) handleMessageFromTradeServer(message []byte, id uint32, conn net.Conn) {
-	var m shared.ResolverMessage
-	_ = json.Unmarshal(message, &m)
-
-	switch m.Type {
-	case shared.AUTHENTICATION:
-		conn.Write([]byte(fmt.Sprintf("%d", tokenToUserId(m.Payload, rs.db, rs.checkExpires))))
-	}
 }
 
 // ----------------------------------------------------
@@ -209,6 +168,15 @@ func httpGetTradeServerHandler(apiSevers channelslice.ChannelSlice) func(http.Re
 		// Print out all of the tradeservers
 		for _, hostport := range apiSevers.GetStringList() {
 			fmt.Fprintf(w, "%s,", hostport)
+		}
+	}
+}
+
+func httpGetTradeServerTcpHandler(tradeservers channelmap.ChannelMap) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Print out all of the tradeservers
+		for id, hostport := range tradeservers.Raw() {
+			fmt.Fprintf(w, "%s-%d,", hostport, id)
 		}
 	}
 }
