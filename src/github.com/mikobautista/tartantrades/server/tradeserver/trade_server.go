@@ -612,10 +612,7 @@ func httpMarkBlockForSale(ts *TradeServer) func(http.ResponseWriter, *http.Reque
 			response,
 		}
 		LOG.LogVerbose("Requesting transaction")
-		select {
-		case s := <-response:
-			fmt.Fprintf(w, s)
-		}
+		fmt.Fprintf(w, <-response)
 	}
 }
 
@@ -684,10 +681,7 @@ func httpPurchaseHandler(ts *TradeServer) func(http.ResponseWriter, *http.Reques
 			To:     uint32(userid)},
 			response,
 		}
-		select {
-		case s := <-response:
-			fmt.Fprintf(w, s)
-		}
+		fmt.Fprintf(w, <-response)
 	}
 }
 
