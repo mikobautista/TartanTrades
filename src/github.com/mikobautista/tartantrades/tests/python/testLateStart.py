@@ -11,7 +11,7 @@ VERBOSE = args[0].verbose
 
 # Create a resolver
 if VERBOSE: print "Starting 1 resolver..."
-os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false > /dev/null 2>&1)&")
+os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user=root -db_pw=password > /dev/null 2>&1)&")
 time.sleep(1)
 
 token = urllib2.urlopen("http://localhost:8888/login/?username=foo&password=bar").read().strip()
@@ -19,7 +19,7 @@ userid = urllib2.urlopen("http://localhost:8888/validate/?token={}".format(token
 
 # Start the early trade server
 if VERBOSE: print "Starting 1 early tradeserver..."
-os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1111 --tradeport=2222 -dropTableOnStart=true -createTableOnStart=true > /dev/null 2>&1)&")
+os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1111 --tradeport=2222 -dropTableOnStart=true -createTableOnStart=true -db_user=root -db_pw=password > /dev/null 2>&1)&")
 time.sleep(1)
 
 # Create three sell requests

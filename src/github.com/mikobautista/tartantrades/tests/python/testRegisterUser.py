@@ -11,7 +11,7 @@ VERBOSE = args[0].verbose
 
 # Create a resolver 
 if VERBOSE: print "Starting 1 resolver..."
-os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false > /dev/null 2>&1)&")
+os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user=root -db_pw=password > /dev/null 2>&1)&")
 time.sleep(1)
 
 # Create a new account

@@ -17,7 +17,7 @@ os.system("go build ../../server/main/tradeServerRunner.go")
 
 # Create a resolver
 if VERBOSE: print "Starting 1 resolver and 9 tradeservers..."
-os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false > /dev/null 2>&1)&")
+os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user=root -db_pw=password > /dev/null 2>&1)&")
 time.sleep(1)
 
 token = urllib2.urlopen("http://localhost:8888/login/?username=foo&password=bar").read().strip()
@@ -25,7 +25,7 @@ userid = urllib2.urlopen("http://localhost:8888/validate/?token={}".format(token
 
 # Create NUM_TRADESERVER trade servers
 for i in xrange(NUM_TRADESERVER):
-    os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport="+str(1111 + i)+" --tradeport="+str(2222 + i)+" -dropTableOnStart=true -createTableOnStart=true > /dev/null 2>&1)&")
+    os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport="+str(1111 + i)+" --tradeport="+str(2222 + i)+" -dropTableOnStart=true -createTableOnStart=true -db_user=root -db_pw=password > /dev/null 2>&1)&")
     time.sleep(0.1)
 
 time.sleep(NUM_TRADESERVER/2)

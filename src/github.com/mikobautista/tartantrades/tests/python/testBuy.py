@@ -9,14 +9,12 @@ parser.add_option("-v", action="store_true", dest="verbose", default=False)
 args = parser.parse_args()
 VERBOSE = args[0].verbose
 
-token = "eyJVc2VybmFtZSI6ImZvbyIsIkV4cGVyYXRpb24iOiIyMDE0LTA0LTI4VDA1OjIwOjAwLjc0MTg0NjgyOC0wNDowMCJ9"
-
 # Create a resolver and two tradeserver runners
 if VERBOSE: print "Starting 1 resolver and 2 tradeservers..."
-os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false > /dev/null 2>&1)&")
+os.system("(./resolverRunner -tradeport=1234 -httpport=8888 -checkSessionExperation=false -db_user=root -db_pw=password > /dev/null 2>&1)&")
 time.sleep(1)
-os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1111 --tradeport=2222 -dropTableOnStart=true -createTableOnStart=true > /dev/null 2>&1)&")
-os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1112 --tradeport=2223 -dropTableOnStart=true -createTableOnStart=true > /dev/null 2>&1)&")
+os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1111 --tradeport=2222 -dropTableOnStart=true -createTableOnStart=true -db_user=root -db_pw=password > /dev/null 2>&1)&")
+os.system("(./tradeServerRunner -resolverHost=127.0.0.1 -resolverHttpPort=8888 -resolverTcpPort=1234 --httpport=1112 --tradeport=2223 -dropTableOnStart=true -createTableOnStart=true -db_user=root -db_pw=password > /dev/null 2>&1)&")
 time.sleep(1)
 
 token = urllib2.urlopen("http://localhost:8888/login/?username=foo&password=bar").read().strip()
