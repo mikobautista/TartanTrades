@@ -16,6 +16,7 @@ import (
 	"github.com/mikobautista/tartantrades/channelslice"
 	"github.com/mikobautista/tartantrades/logging"
 	"github.com/mikobautista/tartantrades/server/shared"
+	"github.com/mikobautista/tartantrades/set"
 
 	_ "github.com/ziutek/mymysql/godrv"
 )
@@ -53,6 +54,7 @@ type ResolverServer struct {
 	dbPw            string
 	sessionDuration int
 	checkExpires    bool
+	servers         *set.IntSet
 }
 
 func NewResolverServer(
@@ -75,6 +77,7 @@ func NewResolverServer(
 		dbPw:            dbPw,
 		sessionDuration: sessionDuration,
 		checkExpires:    checkExpires,
+		servers:         set.NewUint32Set(),
 	}
 }
 
@@ -124,9 +127,8 @@ func (rs *ResolverServer) onTradeServerConnection(conn net.Conn) {
 	_ = json.Unmarshal(buf[:n], &m)
 
 	connectionHostPort := m.Payload
-	remoteHostPort := conn.RemoteAddr().String()
 	h := GetHash(connectionHostPort)
-	LOG.LogVerbose("ID for %s is %d", remoteHostPort, h)
+	LOG.LogVerbose("ID for %s is %d", connectionHostPort, h)
 
 	jId := shared.ResolverMessage{
 		Type: shared.ID_ASSIGNMENT,
@@ -136,23 +138,35 @@ func (rs *ResolverServer) onTradeServerConnection(conn net.Conn) {
 	mId, _ := json.Marshal(jId)
 
 	conn.Write(mId)
+	exists := rs.servers.Get(h)
 
 	// Notify trade servers of new server joining
-	for _, v := range rs.connectionMap.Raw() {
-		joinMessage := shared.ResolverMessage{
-			Type:    shared.TRADE_SERVER_JOIN,
-			Payload: remoteHostPort,
+	for i, v := range rs.connectionMap.Raw() {
+		// Only notify servers that aren't trying to reconnect to the trade server
+		// (or notify all servers on the first connection)
+		if i.(uint32) < h || !exists {
+			joinMessage := shared.ResolverMessage{
+				Type:    shared.TRADE_SERVER_JOIN,
+				Payload: connectionHostPort,
+				Id:      h,
+			}
+			marshalledMessage, _ := json.Marshal(joinMessage)
+			v.(net.Conn).Write(marshalledMessage)
 		}
-		marshalledMessage, _ := json.Marshal(joinMessage)
-		v.(net.Conn).Write(marshalledMessage)
 	}
 
 	rs.connectionMap.Put(h, conn)
-	rs.tradeServers.Append(remoteHostPort)
-	rs.apiSevers.Append(fmt.Sprintf("%s:%d", strings.Split(remoteHostPort, ":")[0], m.Id))
+	if !exists {
+		LOG.LogVerbose("Adding %s to trade servers", connectionHostPort)
+		rs.tradeServers.Append(connectionHostPort)
+		rs.apiSevers.Append(fmt.Sprintf("%s:%d", strings.Split(connectionHostPort, ":")[0], m.Id))
+		rs.servers.Add(h)
+	} else {
+		LOG.LogVerbose("%s has connected before", connectionHostPort)
+	}
 
 	// Send a hash back to person contacting us.
-	go rs.listenToTradeServer(conn, h, remoteHostPort)
+	go rs.listenToTradeServer(conn, h, connectionHostPort)
 }
 
 func GetHash(key string) uint32 {
@@ -167,21 +181,9 @@ func (rs *ResolverServer) listenToTradeServer(conn net.Conn, id uint32, connecti
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
-			LOG.LogVerbose("TCP error for trade server id %d (%s), dropping...", id, connectionHostPort)
+			LOG.LogVerbose("TCP error for trade server id %d (%s). Waiting for reconnection...", id, connectionHostPort)
 			conn.Close()
 			rs.connectionMap.Rem(id)
-			rs.tradeServers.Rem(connectionHostPort)
-
-			//Notify Clients of drop
-			for _, v := range rs.connectionMap.Raw() {
-				joinMessage := shared.ResolverMessage{
-					Type:    shared.TRADE_SERVER_DROP,
-					Payload: connectionHostPort,
-				}
-				marshalledMessage, _ := json.Marshal(joinMessage)
-				v.(net.Conn).Write(marshalledMessage)
-			}
-
 			return
 		}
 		rs.handleMessageFromTradeServer(buf[:n], id, conn)
@@ -206,7 +208,7 @@ func httpGetTradeServerHandler(apiSevers channelslice.ChannelSlice) func(http.Re
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Print out all of the tradeservers
 		for _, hostport := range apiSevers.GetStringList() {
-			fmt.Fprintf(w, "%s\n", hostport)
+			fmt.Fprintf(w, "%s,", hostport)
 		}
 	}
 }
