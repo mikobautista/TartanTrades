@@ -29,8 +29,9 @@ os.system("./tradeservertest -hp 'localhost:1111' -n 1 -e '' ")
 
 # Create a sell request and check that it gets registered
 if VERBOSE: print "Creating a sell request..."
-os.system("./tradeservertest -n 2 -e '' -hp 'localhost:1111' -x 1 -y 1 -token '{}'".format(token))
+os.system("./tradeservertest -n 2 -e 'OK' -hp 'localhost:1111' -x 1 -y 1 -token '{}'".format(token))
 if VERBOSE: print "Checking that sell request is registered..."
 os.system("./tradeservertest -hp 'localhost:1111' -n 1 -e '1,1>{}:1;'".format(userid))
 
 os.system("killall resolverRunner > /dev/null 2>&1")
+os.system("killall tradeServerRunner > /dev/null 2>&1")

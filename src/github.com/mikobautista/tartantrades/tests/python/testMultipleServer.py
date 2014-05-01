@@ -43,18 +43,19 @@ os.system("./tradeservertest -hp 'localhost:1111' -n 1 -e '' ")
 
 # Create a sell request and check that all trade servers get it
 if VERBOSE: print "Creating a sell request..."
-os.system("./tradeservertest -n 2 -e '' -hp 'localhost:1111' -x 1 -y 1 -token '{}'".format(token))
+os.system("./tradeservertest -n 2 -e 'OK' -hp 'localhost:1111' -x 1 -y 1 -token '{}'".format(token))
 if VERBOSE: print "Checking that sell request gets registered..."
 for i in xrange(NUM_TRADESERVER):
     os.system("./tradeservertest -hp localhost:" + str(1111+i) + " -n 1 -e '1,1>{}:1;'".format(userid))
 
 # Create two sell requests and check that all trade servers get them
 if VERBOSE: print "Creating 2 sell requests one after the other..."
-os.system("./tradeservertest -n 2 -e '' -hp 'localhost:1112' -x 2 -y 2 -token '{}'".format(token))
-os.system("./tradeservertest -n 2 -e '' -hp 'localhost:1113' -x 3 -y 3 -token '{}'".format(token))
+os.system("./tradeservertest -n 2 -e 'OK' -hp 'localhost:1112' -x 2 -y 2 -token '{}'".format(token))
+os.system("./tradeservertest -n 2 -e 'OK' -hp 'localhost:1113' -x 3 -y 3 -token '{}'".format(token))
 time.sleep(1) # wait to be registered
 if VERBOSE: print "Checking that both sell requests get registered in the same order by all tradeservers..."
 for i in xrange(NUM_TRADESERVER):
     os.system("./tradeservertest -hp localhost:" + str(1111+i) + " -n 1 -e '1,1>{}:1;2,2>{}:2;3,3>{}:3;'".format(userid, userid, userid))
 
 os.system("killall resolverRunner > /dev/null 2>&1")
+os.system("killall tradeServerRunner > /dev/null 2>&1")
