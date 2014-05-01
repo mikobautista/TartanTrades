@@ -14,12 +14,12 @@ func Test_All(t *testing.T) {
 
 	performTest("../python/setup.py", "Performing Setup", t)
 
-	// performTest("../python/testSingleServer.py", "Test Single Server", t)
+	performTest("../python/testSingleServer.py", "Test Single Server", t)
 	// performTest("../python/testMultipleServer.py", "Test Multiple Server", t)
 	// performTest("../python/testBuy.py", "Test Buy", t)
 	// performTest("../python/testRegisterUser.py", "Test Register User", t)
 	// performTest("../python/testLateStart.py", "Test Late Start", t)
-	performTest("../python/testRecovery.py", "Test Recovery", t)
+	// performTest("../python/testRecovery.py", "Test Recovery", t)
 
 	performTest("../python/teardown.py", "Performing Teardown", t)
 

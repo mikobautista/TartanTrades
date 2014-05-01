@@ -466,14 +466,14 @@ func (ts *TradeServer) listenForNewItems() {
 									LOG.LogVerbose("Majority rejected proposal for %s (%d to %d)", item.item, acceptCount, rejectCount)
 									// If fail,try again later
 									waiting = false
-									item.response <- "FAIL"
+									item.response <- "FAIL: This server is not on an up-to-date commit"
 								}
 							}
 						}
 					case <-responseTimeout:
 						LOG.LogVerbose("Timeout: proposal for %s is rejected", item.item)
 						waiting = false
-						item.response <- "ERROR: TIMEOUT - TRY AGAIN"
+						item.response <- "FAIL: Paxos majority timeout"
 					}
 				}
 			}
