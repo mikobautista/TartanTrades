@@ -439,6 +439,7 @@ func (ts *TradeServer) listenForNewItems() {
 			if numberOfParticipants == 0 {
 				LOG.LogVerbose("Only Server, commiting transaction.")
 				ts.commit(prepareRequestId, item.item)
+				item.response <- "OK"
 			} else {
 				responseTimeout := time.After(time.Second * PAXOS_ACCEPT_TIMEOUT)
 				for waiting {
